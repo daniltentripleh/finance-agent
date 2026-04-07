@@ -5,7 +5,6 @@ const SANDBOX_TIMEOUT_MS = 10 * 60 * 1000;
 const SANDBOX_SNAPSHOT_ID =
   process.env.VERCEL_SANDBOX_SNAPSHOT_ID?.trim() || null;
 const CLAUDE_AGENT_SDK_VERSION = "0.2.92";
-const CLAUDE_CODE_VERSION = "2.1.92";
 const DEFAULT_SANDBOX_MODEL =
   process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-20250514";
 
@@ -16,7 +15,6 @@ const SANDBOX_PACKAGE_JSON = JSON.stringify(
     type: "module",
     dependencies: {
       "@anthropic-ai/claude-agent-sdk": CLAUDE_AGENT_SDK_VERSION,
-      "@anthropic-ai/claude-code": CLAUDE_CODE_VERSION,
     },
   },
   null,
@@ -41,7 +39,6 @@ for await (const message of query({
     systemPrompt: payload.systemPrompt,
     tools: [],
     permissionMode: "dontAsk",
-    pathToClaudeCodeExecutable: "./node_modules/.bin/claude",
     env: {
       ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
       CLAUDE_AGENT_SDK_CLIENT_APP: "finance-agent-vercel-sandbox"
