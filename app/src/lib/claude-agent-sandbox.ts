@@ -2,12 +2,12 @@ import { Sandbox } from "@vercel/sandbox";
 import { SYSTEM_PROMPT } from "@/lib/system-prompt";
 
 const SANDBOX_TIMEOUT_MS = 10 * 60 * 1000;
-const SANDBOX_MODEL =
-  process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-20250514";
 const SANDBOX_SNAPSHOT_ID =
   process.env.VERCEL_SANDBOX_SNAPSHOT_ID?.trim() || null;
 const CLAUDE_AGENT_SDK_VERSION = "0.2.92";
 const CLAUDE_CODE_VERSION = "2.1.92";
+const DEFAULT_SANDBOX_MODEL =
+  process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-20250514";
 
 const SANDBOX_PACKAGE_JSON = JSON.stringify(
   {
@@ -127,7 +127,11 @@ async function writeSandboxFiles(
   ]);
 }
 
-export async function runClaudeAgentInSandbox(prompt: string, apiKey: string) {
+export async function runClaudeAgentInSandbox(
+  prompt: string,
+  apiKey: string,
+  model = DEFAULT_SANDBOX_MODEL
+) {
   let sandbox: Sandbox | null = null;
 
   try {
@@ -158,7 +162,7 @@ export async function runClaudeAgentInSandbox(prompt: string, apiKey: string) {
 
     await writeSandboxFiles(sandbox, {
       prompt,
-      model: SANDBOX_MODEL,
+      model,
       maxTurns: 4,
       systemPrompt: SYSTEM_PROMPT,
     });
@@ -187,6 +191,7 @@ export async function runClaudeAgentInSandbox(prompt: string, apiKey: string) {
     return {
       result: parsed.result,
       sessionId: parsed.sessionId ?? null,
+      model,
     };
   } catch (error) {
     throw new Error(getReadableSandboxError(error));

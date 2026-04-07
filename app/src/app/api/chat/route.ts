@@ -9,7 +9,7 @@ export const runtime = "nodejs";
 export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const { prompt, messages, apiKey } = await req.json();
+  const { prompt, messages, apiKey, model } = await req.json();
   const key = resolveRuntimeApiKey({
     serverApiKey: process.env.ANTHROPIC_API_KEY,
     browserApiKey: apiKey,
@@ -29,7 +29,13 @@ export async function POST(req: Request) {
     const normalizedPrompt = Array.isArray(messages)
       ? buildConversationPrompt(messages)
       : normalizePrompt(prompt);
-    const result = await runClaudeAgentInSandbox(normalizedPrompt, key);
+    const normalizedModel =
+      typeof model === "string" && model.trim() ? model.trim() : undefined;
+    const result = await runClaudeAgentInSandbox(
+      normalizedPrompt,
+      key,
+      normalizedModel
+    );
 
     return Response.json(result);
   } catch (error) {

@@ -3,12 +3,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getApiKeyMode } from "@/lib/agent-config";
+import {
+  pickDefaultModelId,
+  type ChatModelOption,
+} from "@/lib/anthropic-models";
 import { COMMANDS, CATEGORIES, type Command } from "@/lib/commands";
 
 interface ChatMessage {
   id: string;
   role: "user" | "assistant";
   content: string;
+  modelId?: string;
 }
 
 function useApiKey() {
@@ -218,19 +223,28 @@ function WelcomeScreen({ onCommand }: { onCommand: (text: string) => void }) {
         </div>
 
         <p className="mt-8 text-center text-xs text-[var(--color-terminal-muted)]">
-          Type a command or ask any financial question. Use / to see all commands.
+          Choose a model for each message, then run any finance command.
         </p>
       </div>
     </div>
   );
 }
 
-function createChatMessage(role: ChatMessage["role"], content: string): ChatMessage {
+function createChatMessage(
+  role: ChatMessage["role"],
+  content: string,
+  modelId?: string
+): ChatMessage {
   return {
     id: crypto.randomUUID(),
     role,
     content,
+    modelId,
   };
+}
+
+function formatModelLabel(modelId?: string) {
+  return modelId ? modelId : "model pending";
 }
 
 export default function HomeClient({
@@ -245,6 +259,10 @@ export default function HomeClient({
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showPalette, setShowPalette] = useState(false);
+  const [models, setModels] = useState<ChatModelOption[]>([]);
+  const [selectedModelId, setSelectedModelId] = useState("");
+  const [isLoadingModels, setIsLoadingModels] = useState(false);
+  const [modelsError, setModelsError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -252,7 +270,8 @@ export default function HomeClient({
     serverApiKey: serverHasApiKey ? "configured" : "",
     browserApiKey: apiKey,
   });
-  const canSend = apiKeyMode !== "missing";
+  const hasAnyKey = apiKeyMode !== "missing";
+  const canSend = hasAnyKey && Boolean(selectedModelId) && !isLoadingModels;
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -268,18 +287,91 @@ export default function HomeClient({
     }
   }, [apiKey, loaded, serverHasApiKey]);
 
+  useEffect(() => {
+    if (!serverHasApiKey && !loaded) return;
+
+    if (!serverHasApiKey && !apiKey) {
+      setModels([]);
+      setSelectedModelId("");
+      setModelsError(null);
+      setIsLoadingModels(false);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function loadModels() {
+      setIsLoadingModels(true);
+      setModelsError(null);
+
+      try {
+        const response = await fetch("/api/models", {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            apiKey: apiKey || undefined,
+          }),
+        });
+
+        const data = (await response.json()) as {
+          models?: ChatModelOption[];
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error || "Failed to load models.");
+        }
+
+        const nextModels = data.models ?? [];
+        if (cancelled) return;
+
+        setModels(nextModels);
+        setSelectedModelId((current) =>
+          pickDefaultModelId(nextModels, current) ?? ""
+        );
+      } catch (caughtError) {
+        if (cancelled) return;
+
+        setModels([]);
+        setSelectedModelId("");
+        setModelsError(
+          caughtError instanceof Error
+            ? caughtError.message
+            : "Failed to load models."
+        );
+      } finally {
+        if (!cancelled) {
+          setIsLoadingModels(false);
+        }
+      }
+    }
+
+    void loadModels();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [apiKey, loaded, serverHasApiKey]);
+
   const paletteFilter = input.startsWith("/") ? input.slice(1) : "";
 
   async function sendPrompt(promptValue: string) {
     const trimmedPrompt = promptValue.trim();
     if (!trimmedPrompt || isLoading) return;
 
-    if (!canSend) {
+    if (!hasAnyKey) {
       setShowSettings(true);
       return;
     }
 
-    const userMessage = createChatMessage("user", trimmedPrompt);
+    if (!selectedModelId) {
+      setModelsError("Choose a model before sending a message.");
+      return;
+    }
+
+    const userMessage = createChatMessage("user", trimmedPrompt, selectedModelId);
     const nextMessages = [...messages, userMessage];
 
     setMessages(nextMessages);
@@ -296,14 +388,16 @@ export default function HomeClient({
         },
         body: JSON.stringify({
           prompt: trimmedPrompt,
-          messages: nextMessages,
+          messages: nextMessages.map(({ role, content }) => ({ role, content })),
           apiKey: apiKey || undefined,
+          model: selectedModelId,
         }),
       });
 
       const data = (await response.json()) as {
         result?: string;
         error?: string;
+        model?: string;
       };
 
       if (!response.ok) {
@@ -312,7 +406,7 @@ export default function HomeClient({
 
       setMessages((current) => [
         ...current,
-        createChatMessage("assistant", data.result || ""),
+        createChatMessage("assistant", data.result || "", data.model || selectedModelId),
       ]);
     } catch (caughtError) {
       setError(
@@ -361,6 +455,12 @@ export default function HomeClient({
         ? "animate-pulse bg-[var(--color-terminal-amber)]"
         : "bg-[var(--color-terminal-green)]";
 
+  const modelStatus = isLoadingModels
+    ? "Loading models..."
+    : models.length > 0
+      ? `${models.length} models`
+      : "No models";
+
   return (
     <div className="flex h-screen flex-col">
       {showSettings && (
@@ -383,7 +483,7 @@ export default function HomeClient({
           </span>
         </div>
         <div className="flex items-center gap-4 text-xs text-[var(--color-terminal-muted)]">
-          <span>{COMMANDS.length} commands</span>
+          <span>{modelStatus}</span>
           <button
             onClick={() => setShowSettings(true)}
             className={`flex items-center gap-1.5 transition-colors hover:text-[var(--color-terminal-text)] ${
@@ -398,9 +498,9 @@ export default function HomeClient({
         </div>
       </header>
 
-      {error && (
+      {(error || modelsError) && (
         <div className="border-b border-[var(--color-terminal-red)]/30 bg-[var(--color-terminal-red)]/10 px-6 py-2 text-xs text-[var(--color-terminal-red)]">
-          {error}
+          {error || modelsError}
         </div>
       )}
 
@@ -422,6 +522,11 @@ export default function HomeClient({
                     {message.role === "user" ? "you >" : "agent >"}
                   </span>
                   <div className="min-w-0 flex-1">
+                    <div className="mb-2">
+                      <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-[10px] text-[var(--color-terminal-muted)]">
+                        {formatModelLabel(message.modelId)}
+                      </span>
+                    </div>
                     {message.role === "user" ? (
                       <p className="whitespace-pre-wrap text-sm">
                         {message.content}
@@ -441,9 +546,16 @@ export default function HomeClient({
                   <span className="mt-1 min-w-[60px] text-xs font-bold text-[var(--color-terminal-accent)]">
                     agent &gt;
                   </span>
-                  <span className="cursor-blink text-sm text-[var(--color-terminal-muted)]">
-                    running in vercel sandbox
-                  </span>
+                  <div className="flex-1">
+                    <div className="mb-2">
+                      <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-[10px] text-[var(--color-terminal-muted)]">
+                        {formatModelLabel(selectedModelId)}
+                      </span>
+                    </div>
+                    <span className="cursor-blink text-sm text-[var(--color-terminal-muted)]">
+                      running in vercel sandbox
+                    </span>
+                  </div>
                 </div>
               </div>
             )}
@@ -463,6 +575,24 @@ export default function HomeClient({
             <span className="text-sm font-bold text-[var(--color-terminal-green)]">
               $
             </span>
+            <select
+              value={selectedModelId}
+              onChange={(event) => setSelectedModelId(event.target.value)}
+              disabled={isLoading || isLoadingModels || models.length === 0}
+              className="w-64 rounded border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] px-3 py-2 text-xs text-[var(--color-terminal-text)] outline-none focus:border-[var(--color-terminal-accent)] disabled:opacity-50"
+            >
+              {models.length === 0 ? (
+                <option value="">
+                  {isLoadingModels ? "Loading models..." : "No models available"}
+                </option>
+              ) : (
+                models.map((model) => (
+                  <option key={model.id} value={model.id}>
+                    {model.displayName} ({model.id})
+                  </option>
+                ))
+              )}
+            </select>
             <input
               ref={inputRef}
               value={input}
@@ -470,22 +600,23 @@ export default function HomeClient({
               placeholder={
                 canSend
                   ? "Type a command (/earnings NVDA Q4 2024) or ask a question..."
-                  : "Set your Anthropic API key first..."
+                  : hasAnyKey
+                    ? "Waiting for model list..."
+                    : "Set your Anthropic API key first..."
               }
               className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-terminal-muted)]"
               disabled={isLoading}
             />
             <button
               type="submit"
-              disabled={isLoading || !input.trim()}
+              disabled={isLoading || !input.trim() || !canSend}
               className="rounded bg-[var(--color-terminal-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--color-terminal-bg)] transition-opacity hover:opacity-90 disabled:opacity-30"
             >
               Run
             </button>
           </div>
           <p className="mt-2 text-center text-[10px] text-[var(--color-terminal-muted)]">
-            Type / to browse commands · Enter to send · Powered by Claude Agent
-            SDK in Vercel Sandbox
+            Choose the model for this message, then press Enter to send.
           </p>
         </form>
       </div>
