@@ -1,27 +1,31 @@
 import { Sandbox } from "@vercel/sandbox";
-import { SYSTEM_PROMPT } from "@/lib/system-prompt";
+import { SYSTEM_PROMPT } from "./system-prompt";
 
 const SANDBOX_TIMEOUT_MS = 10 * 60 * 1000;
 const SANDBOX_SNAPSHOT_ID =
   process.env.VERCEL_SANDBOX_SNAPSHOT_ID?.trim() || null;
 const CLAUDE_AGENT_SDK_VERSION = "0.2.92";
+const CLAUDE_CODE_VERSION = "2.1.92";
 const DEFAULT_SANDBOX_MODEL =
   process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-20250514";
 
-const SANDBOX_PACKAGE_JSON = JSON.stringify(
-  {
-    name: "finance-agent-sandbox-runner",
-    private: true,
-    type: "module",
-    dependencies: {
-      "@anthropic-ai/claude-agent-sdk": CLAUDE_AGENT_SDK_VERSION,
+export function buildSandboxPackageJson() {
+  return JSON.stringify(
+    {
+      name: "finance-agent-sandbox-runner",
+      private: true,
+      type: "module",
+      dependencies: {
+        "@anthropic-ai/claude-agent-sdk": CLAUDE_AGENT_SDK_VERSION,
+      },
     },
-  },
-  null,
-  2
-);
+    null,
+    2
+  );
+}
 
-const SANDBOX_AGENT_SCRIPT = `import { readFile } from "node:fs/promises";
+export function buildSandboxAgentScript() {
+  return `import { readFile } from "node:fs/promises";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const payload = JSON.parse(await readFile("./request.json", "utf8"));
@@ -30,40 +34,53 @@ let sessionId = null;
 let finalResult = "";
 let finalError = null;
 
-for await (const message of query({
-  prompt: payload.prompt,
-  options: {
-    cwd: process.cwd(),
-    model: payload.model,
-    maxTurns: payload.maxTurns,
-    systemPrompt: payload.systemPrompt,
-    tools: [],
-    permissionMode: "dontAsk",
-    env: {
-      ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
-      CLAUDE_AGENT_SDK_CLIENT_APP: "finance-agent-vercel-sandbox"
+try {
+  for await (const message of query({
+    prompt: payload.prompt,
+    options: {
+      cwd: process.cwd(),
+      model: payload.model,
+      maxTurns: payload.maxTurns,
+      systemPrompt: payload.systemPrompt,
+      tools: [],
+      permissionMode: "dontAsk",
+      pathToClaudeCodeExecutable: "claude",
+      env: {
+        ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
+        CLAUDE_AGENT_SDK_CLIENT_APP: "finance-agent-vercel-sandbox"
+      }
     }
+  })) {
+    if (message.type !== "result") continue;
+
+    sessionId = message.session_id;
+
+    if (message.subtype === "success") {
+      finalResult = message.result;
+      continue;
+    }
+
+    finalError = message.errors?.join("\\n") || "Claude Agent SDK failed.";
   }
-})) {
-  if (message.type !== "result") continue;
 
-  sessionId = message.session_id;
-
-  if (message.subtype === "success") {
-    finalResult = message.result;
-    continue;
+  if (finalError) {
+    console.error(finalError);
+    process.exit(1);
   }
 
-  finalError = message.errors?.join("\\n") || "Claude Agent SDK failed.";
-}
+  console.log(JSON.stringify({ result: finalResult, sessionId }));
+} catch (error) {
+  const message =
+    error instanceof Error ? error.message : "Claude Agent SDK failed.";
 
-if (finalError) {
-  console.error(JSON.stringify({ error: finalError, sessionId }));
+  console.error(message);
   process.exit(1);
 }
-
-console.log(JSON.stringify({ result: finalResult, sessionId }));
 `;
+}
+
+const SANDBOX_PACKAGE_JSON = buildSandboxPackageJson();
+const SANDBOX_AGENT_SCRIPT = buildSandboxAgentScript();
 
 function getInstallNetworkPolicy(useSnapshot: boolean) {
   if (useSnapshot) {
@@ -75,31 +92,82 @@ function getInstallNetworkPolicy(useSnapshot: boolean) {
   };
 }
 
-function getReadableSandboxError(error: unknown) {
-  const message =
-    error instanceof Error ? error.message : "Unknown sandbox error.";
+export function sanitizeSandboxErrorMessage(
+  message: string,
+  options?: { usesSnapshot?: boolean }
+) {
+  const trimmed = message.trim();
 
   if (
-    message.includes("Auth required") ||
-    message.includes("VERCEL_OIDC_TOKEN") ||
-    message.includes("oidc")
+    trimmed.includes("Auth required") ||
+    trimmed.includes("VERCEL_OIDC_TOKEN") ||
+    trimmed.toLowerCase().includes("oidc")
   ) {
     return "Vercel Sandbox authentication is not available. In local development, run `vercel link` and `vercel env pull` before using the agent route.";
   }
 
-  return message;
+  if (trimmed.includes("Claude Code process exited with code 127")) {
+    if (options?.usesSnapshot) {
+      return "Claude Code CLI could not start inside the Vercel sandbox snapshot. Rebuild the snapshot so it includes a working global Claude Code CLI installation.";
+    }
+
+    return "Claude Code CLI could not start inside the Vercel sandbox. Redeploy so the latest sandbox bootstrap can reinstall the CLI.";
+  }
+
+  return trimmed.split(/\r?\n/).find((line) => line.trim()) || "Unknown sandbox error.";
+}
+
+function getReadableSandboxError(
+  error: unknown,
+  options?: { usesSnapshot?: boolean }
+) {
+  const message =
+    error instanceof Error ? error.message : "Unknown sandbox error.";
+
+  return sanitizeSandboxErrorMessage(message, options);
 }
 
 async function installSandboxDependencies(sandbox: Sandbox) {
-  const install = await sandbox.runCommand({
+  const installClaudeCode = await sandbox.runCommand({
+    cmd: "npm",
+    args: ["install", "-g", `@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}`],
+    sudo: true,
+  });
+
+  if (installClaudeCode.exitCode !== 0) {
+    throw new Error(
+      `Claude Code CLI install failed\n${await installClaudeCode.stderr()}`
+    );
+  }
+
+  const installSdk = await sandbox.runCommand({
     cmd: "npm",
     args: ["install"],
     cwd: "/vercel/sandbox",
   });
 
-  if (install.exitCode !== 0) {
+  if (installSdk.exitCode !== 0) {
     throw new Error(
-      `Sandbox dependency install failed:\n${await install.stderr()}`
+      `Sandbox dependency install failed\n${await installSdk.stderr()}`
+    );
+  }
+}
+
+async function verifyClaudeCodeCli(sandbox: Sandbox, useSnapshot: boolean) {
+  const verify = await sandbox.runCommand({
+    cmd: "claude",
+    args: ["--version"],
+    cwd: "/vercel/sandbox",
+  });
+
+  if (verify.exitCode !== 0) {
+    const stderr = (await verify.stderr()).trim();
+
+    throw new Error(
+      stderr ||
+        (useSnapshot
+          ? "Claude Code process exited with code 127"
+          : "Claude Code process exited with code 127")
     );
   }
 }
@@ -130,13 +198,14 @@ export async function runClaudeAgentInSandbox(
   model = DEFAULT_SANDBOX_MODEL
 ) {
   let sandbox: Sandbox | null = null;
+  const usesSnapshot = Boolean(SANDBOX_SNAPSHOT_ID);
 
   try {
-    if (SANDBOX_SNAPSHOT_ID) {
+    if (usesSnapshot) {
       sandbox = await Sandbox.create({
         source: {
           type: "snapshot",
-          snapshotId: SANDBOX_SNAPSHOT_ID,
+          snapshotId: SANDBOX_SNAPSHOT_ID!,
         },
         timeout: SANDBOX_TIMEOUT_MS,
         env: {
@@ -164,9 +233,11 @@ export async function runClaudeAgentInSandbox(
       systemPrompt: SYSTEM_PROMPT,
     });
 
-    if (!SANDBOX_SNAPSHOT_ID) {
+    if (!usesSnapshot) {
       await installSandboxDependencies(sandbox);
     }
+
+    await verifyClaudeCodeCli(sandbox, usesSnapshot);
 
     const run = await sandbox.runCommand({
       cmd: "node",
@@ -191,7 +262,7 @@ export async function runClaudeAgentInSandbox(
       model,
     };
   } catch (error) {
-    throw new Error(getReadableSandboxError(error));
+    throw new Error(getReadableSandboxError(error, { usesSnapshot }));
   } finally {
     if (sandbox) {
       await sandbox.stop({ blocking: true }).catch(() => undefined);
