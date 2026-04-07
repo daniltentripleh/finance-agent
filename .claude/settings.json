@@ -1,0 +1,17 @@
+{
+  "enabledPlugins": {
+    "financial-analysis@financial-services-plugins": true,
+    "investment-banking@financial-services-plugins": true,
+    "equity-research@financial-services-plugins": true,
+    "private-equity@financial-services-plugins": true,
+    "wealth-management@financial-services-plugins": true
+  },
+  "extraKnownMarketplaces": {
+    "financial-services-plugins": {
+      "source": {
+        "source": "directory",
+        "path": ".agents/plugins/financial-services-plugins"
+      }
+    }
+  }
+}

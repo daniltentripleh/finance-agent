@@ -1,0 +1,28 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(claude plugin:*)",
+      "Bash(where claude:*)",
+      "Bash(npx claude:*)",
+      "Read(//tmp/**)",
+      "Bash(ls -1d \"C:/Users/danil/.claude/plugins/cache/financial-services-plugins\"/*/)",
+      "Bash(dir:*)",
+      "Bash(powershell:*)",
+      "Bash(powershell.exe:*)",
+      "Bash(bash --version)",
+      "Bash(echo \"EXIT: $?\")",
+      "Bash(npx create-next-app@latest app --typescript --tailwind --eslint --app --src-dir --no-import-alias --use-npm)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebSearch",
+      "WebFetch(domain:github.com)",
+      "Bash(claude mcp:*)",
+      "Bash(claude --version)",
+      "mcp__plugin_vercel_vercel__deploy_to_vercel",
+      "Bash(npx vercel:*)",
+      "mcp__plugin_playwright_playwright__browser_navigate",
+      "mcp__plugin_playwright_playwright__browser_snapshot",
+      "mcp__plugin_playwright_playwright__browser_click",
+      "Read(//c/Users/danil/projects/finance-agent//**)"
+    ]
+  }
+}

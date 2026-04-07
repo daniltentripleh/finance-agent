@@ -1,0 +1,56 @@
+- generic [active] [ref=e1]:
+  - link "Skip to content":
+    - /url: "#geist-skip-nav"
+  - generic [ref=e289]:
+    - banner [ref=e290]:
+      - link "Vercel logo":
+        - /url: /home
+        - button "Vercel Logo":
+          - img "Vercel Logo"
+      - navigation [ref=e291]:
+        - navigation [ref=e292]:
+          - link "Sign Up" [ref=e293] [cursor=pointer]:
+            - /url: /signup?next=%2Fnew
+            - paragraph [ref=e295]: Sign Up
+    - main [ref=e296]:
+      - generic [ref=e298]:
+        - heading "Log in to Vercel" [level=1] [ref=e301]
+        - generic [ref=e302]:
+          - generic [ref=e303]:
+            - textbox "Email Address" [ref=e305]
+            - button "Continue with Email" [ref=e307] [cursor=pointer]:
+              - generic [ref=e308]: Continue with Email
+          - generic [ref=e310]:
+            - button "Continue with Google" [ref=e311] [cursor=pointer]:
+              - img [ref=e314]
+              - generic [ref=e320]: Continue with Google
+            - button "Continue with GitHub" [ref=e321] [cursor=pointer]:
+              - img [ref=e323]
+              - generic [ref=e327]: Continue with GitHub
+            - button "Continue with Apple" [ref=e328] [cursor=pointer]:
+              - img [ref=e330]
+              - generic [ref=e333]: Continue with Apple
+            - button "Continue with SAML SSO" [ref=e335] [cursor=pointer]:
+              - img [ref=e337]
+              - generic [ref=e339]: Continue with SAML SSO
+            - button "Continue with Passkey" [ref=e340] [cursor=pointer]:
+              - img [ref=e342]
+              - generic [ref=e344]: Continue with Passkey
+            - button "Show other options" [ref=e345] [cursor=pointer]:
+              - generic [ref=e346]: Show other options
+        - paragraph [ref=e348]:
+          - text: Don't have an account?
+          - link "Sign Up" [ref=e349] [cursor=pointer]:
+            - /url: /signup?next=%2Fnew
+      - generic [ref=e352]:
+        - link "Terms" [ref=e353] [cursor=pointer]:
+          - /url: /legal/terms
+        - link "Privacy Policy" [ref=e354] [cursor=pointer]:
+          - /url: /legal/privacy-policy
+  - text: $
+  - alert [ref=e287]
+  - generic:
+    - generic:
+      - generic:
+        - generic:
+          - img
