@@ -1,28 +1,44 @@
-import { createAnthropic } from "@ai-sdk/anthropic";
-import { streamText } from "ai";
-import { SYSTEM_PROMPT } from "@/lib/system-prompt";
+import {
+  buildConversationPrompt,
+  normalizePrompt,
+  resolveRuntimeApiKey,
+} from "@/lib/agent-config";
+import { runClaudeAgentInSandbox } from "@/lib/claude-agent-sandbox";
 
-export const maxDuration = 60;
+export const runtime = "nodejs";
+export const maxDuration = 300;
 
 export async function POST(req: Request) {
-  const { messages, apiKey } = await req.json();
+  const { prompt, messages, apiKey } = await req.json();
+  const key = resolveRuntimeApiKey({
+    serverApiKey: process.env.ANTHROPIC_API_KEY,
+    browserApiKey: apiKey,
+  });
 
-  const key = apiKey || process.env.ANTHROPIC_API_KEY;
   if (!key) {
     return new Response(
-      JSON.stringify({ error: "No API key. Enter your Anthropic API key in settings." }),
+      JSON.stringify({
+        error:
+          "No API key. Set ANTHROPIC_API_KEY in Vercel or enter a browser API key in settings.",
+      }),
       { status: 401, headers: { "Content-Type": "application/json" } }
     );
   }
 
-  const anthropic = createAnthropic({ apiKey: key });
+  try {
+    const normalizedPrompt = Array.isArray(messages)
+      ? buildConversationPrompt(messages)
+      : normalizePrompt(prompt);
+    const result = await runClaudeAgentInSandbox(normalizedPrompt, key);
 
-  const result = streamText({
-    model: anthropic("claude-sonnet-4-20250514"),
-    system: SYSTEM_PROMPT,
-    messages,
-    maxTokens: 8192,
-  });
+    return Response.json(result);
+  } catch (error) {
+    const message =
+      error instanceof Error ? error.message : "Claude Agent SDK request failed.";
 
-  return result.toDataStreamResponse();
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
 }
