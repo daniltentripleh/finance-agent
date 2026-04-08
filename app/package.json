@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.2.92",
+    "@supabase/supabase-js": "^2.49.8",
     "@vercel/sandbox": "^1.9.2",
     "next": "^15.3.0",
     "react": "^19.1.0",
