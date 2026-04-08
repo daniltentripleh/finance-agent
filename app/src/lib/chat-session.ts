@@ -16,3 +16,38 @@ export function parseChatSessionCookie(value: string | null | undefined) {
 
   return trimmed;
 }
+
+export function createChatSessionId() {
+  return crypto.randomUUID();
+}
+
+export function getChatSessionCookieOptions() {
+  return {
+    httpOnly: true,
+    sameSite: "lax" as const,
+    secure: process.env.NODE_ENV === "production",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  };
+}
+
+export async function ensureAnonymousChatSession(
+  supabase: any,
+  cookieValue: string | null | undefined
+) {
+  const sessionId = parseChatSessionCookie(cookieValue) ?? createChatSessionId();
+  const now = new Date().toISOString();
+  const payload = {
+    id: sessionId,
+    updated_at: now,
+    last_active_at: now,
+  };
+
+  const { error } = await supabase.from("chat_sessions").upsert(payload);
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return sessionId;
+}
