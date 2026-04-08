@@ -68,6 +68,28 @@ const dictionaries = {
           `${commands} commands · ${skills} skills`,
       },
     },
+    docs: {
+      metadata: {
+        title: "Finance Agent Docs",
+        description:
+          "Live runtime documentation for discovered commands, plugins, and skills.",
+      },
+      eyebrow: "Runtime Docs",
+      title: "Command and Skill Reference",
+      description:
+        "Live documentation generated from the currently discovered plugins, commands, and skills. When you add, remove, or disable plugin files, this page updates on refresh.",
+      totalCapabilities: "total capabilities",
+      backToChat: "Back to Chat",
+      emptyState:
+        "No commands or skills are available right now. Add plugin files or workspace `.claude` assets, then refresh this page.",
+      commandsTitle: "Commands",
+      skillsTitle: "Skills",
+      commandsEmpty: "No commands discovered in this section.",
+      skillsEmpty: "No skills discovered in this section.",
+      sourceLabel: "Source",
+      groupCounts: (commands: number, skills: number) =>
+        `${commands} commands · ${skills} skills`,
+    },
   },
   ko: {
     common: {
@@ -133,6 +155,28 @@ const dictionaries = {
         counts: (commands: number, skills: number) =>
           `명령어 ${commands}개 · 스킬 ${skills}개`,
       },
+    },
+    docs: {
+      metadata: {
+        title: "파이낸스 에이전트 문서",
+        description:
+          "발견된 명령어, 플러그인, 스킬에 대한 실시간 런타임 문서입니다.",
+      },
+      eyebrow: "런타임 문서",
+      title: "명령어 및 스킬 레퍼런스",
+      description:
+        "현재 발견된 플러그인, 명령어, 스킬을 바탕으로 생성된 실시간 문서입니다. 플러그인 파일을 추가, 제거 또는 비활성화하면 새로고침 시 이 페이지가 갱신됩니다.",
+      totalCapabilities: "전체 기능 수",
+      backToChat: "채팅으로 돌아가기",
+      emptyState:
+        "현재 사용 가능한 명령어나 스킬이 없습니다. 플러그인 파일이나 워크스페이스 `.claude` 자산을 추가한 뒤 이 페이지를 새로고침하세요.",
+      commandsTitle: "명령어",
+      skillsTitle: "스킬",
+      commandsEmpty: "이 섹션에서 발견된 명령어가 없습니다.",
+      skillsEmpty: "이 섹션에서 발견된 스킬이 없습니다.",
+      sourceLabel: "원본",
+      groupCounts: (commands: number, skills: number) =>
+        `명령어 ${commands}개 · 스킬 ${skills}개`,
     },
   },
 } as const;

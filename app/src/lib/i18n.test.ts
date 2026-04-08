@@ -30,3 +30,9 @@ describe("home dictionary", () => {
     expect(getDictionary("ko").home.header.docs).toBe("문서");
   });
 });
+
+describe("docs dictionary", () => {
+  it("exposes Korean docs copy", () => {
+    expect(getDictionary("ko").docs.backToChat).toBe("채팅으로 돌아가기");
+  });
+});
