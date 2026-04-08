@@ -87,6 +87,13 @@ interface FrontmatterValues {
   ["argument-hint"]?: string;
 }
 
+interface MarketplaceDirectory {
+  manifest: ClaudeMarketplaceManifest;
+  manifestPath: string;
+  marketplaceName: string;
+  root: string;
+}
+
 function toSandboxPath(relativePath: string) {
   return relativePath.split(path.sep).join("/");
 }
@@ -108,6 +115,7 @@ async function readJsonFile<T>(filePath: string) {
 async function collectFilesRecursively(directoryPath: string): Promise<string[]> {
   const entries = await readdir(directoryPath, { withFileTypes: true });
   const files: string[] = [];
+  const ignoredDirectoryNames = new Set([".git", "node_modules", ".next"]);
 
   for (const entry of entries.sort((left, right) =>
     left.name.localeCompare(right.name)
@@ -115,6 +123,10 @@ async function collectFilesRecursively(directoryPath: string): Promise<string[]>
     const fullPath = path.join(directoryPath, entry.name);
 
     if (entry.isDirectory()) {
+      if (ignoredDirectoryNames.has(entry.name)) {
+        continue;
+      }
+
       files.push(...(await collectFilesRecursively(fullPath)));
       continue;
     }
@@ -185,7 +197,30 @@ function humanizeName(value: string) {
     .join(" ");
 }
 
+async function findProjectBoundary(startDirectory = process.cwd()) {
+  let currentDirectory = path.resolve(startDirectory);
+  let packageBoundary: string | null = null;
+
+  while (true) {
+    if (await pathExists(path.join(currentDirectory, ".git"))) {
+      return currentDirectory;
+    }
+
+    if (await pathExists(path.join(currentDirectory, "package.json"))) {
+      packageBoundary = currentDirectory;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return packageBoundary ?? path.resolve(startDirectory);
+    }
+
+    currentDirectory = parentDirectory;
+  }
+}
+
 async function findClaudeWorkspaceRoot(startDirectory = process.cwd()) {
+  const projectBoundary = await findProjectBoundary(startDirectory);
   let currentDirectory = path.resolve(startDirectory);
 
   while (true) {
@@ -195,6 +230,10 @@ async function findClaudeWorkspaceRoot(startDirectory = process.cwd()) {
       return currentDirectory;
     }
 
+    if (currentDirectory === projectBoundary) {
+      return null;
+    }
+
     const parentDirectory = path.dirname(currentDirectory);
     if (parentDirectory === currentDirectory) {
       return null;
@@ -202,6 +241,59 @@ async function findClaudeWorkspaceRoot(startDirectory = process.cwd()) {
 
     currentDirectory = parentDirectory;
   }
+}
+
+async function findPluginsDirectory(startDirectory = process.cwd()) {
+  let currentDirectory = path.resolve(startDirectory);
+
+  while (true) {
+    const pluginsDirectory = path.join(currentDirectory, "plugins");
+    if (await pathExists(pluginsDirectory)) {
+      return pluginsDirectory;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+
+    currentDirectory = parentDirectory;
+  }
+}
+
+async function discoverMarketplaceDirectories(
+  pluginsDirectory: string
+): Promise<Map<string, MarketplaceDirectory>> {
+  const entries = await readdir(pluginsDirectory, { withFileTypes: true });
+  const marketplaces = new Map<string, MarketplaceDirectory>();
+
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )) {
+    if (!entry.isDirectory()) continue;
+
+    const marketplaceRoot = path.join(pluginsDirectory, entry.name);
+    const marketplaceManifestPath = path.join(
+      marketplaceRoot,
+      ".claude-plugin",
+      "marketplace.json"
+    );
+
+    if (!(await pathExists(marketplaceManifestPath))) {
+      continue;
+    }
+
+    marketplaces.set(entry.name, {
+      marketplaceName: entry.name,
+      root: marketplaceRoot,
+      manifestPath: marketplaceManifestPath,
+      manifest: await readJsonFile<ClaudeMarketplaceManifest>(
+        marketplaceManifestPath
+      ),
+    });
+  }
+
+  return marketplaces;
 }
 
 export function buildSandboxNetworkAllowList(
@@ -227,8 +319,9 @@ export async function discoverClaudeRuntimeCatalog(
   startDirectory = process.cwd()
 ): Promise<ClaudeRuntimeCatalog> {
   const workspaceRoot = await findClaudeWorkspaceRoot(startDirectory);
+  const pluginsDirectory = await findPluginsDirectory(startDirectory);
 
-  if (!workspaceRoot) {
+  if (!workspaceRoot && !pluginsDirectory) {
     return {
       plugins: [],
       commands: [],
@@ -243,27 +336,38 @@ export async function discoverClaudeRuntimeCatalog(
   const commands: ClaudeCommandSummary[] = [];
   const skills: ClaudeSkillSummary[] = [];
   const plugins: ClaudePluginSummary[] = [];
+  const sandboxSettingsMarketplaces: Record<
+    string,
+    { source: { source: string; path: string } }
+  > = {};
+  const sandboxEnabledPlugins: Record<string, boolean> = {};
 
-  const addFile = async (absolutePath: string) => {
+  const addFile = async (absolutePath: string, sandboxPath: string) => {
     if (!(await pathExists(absolutePath))) return;
 
-    const relativePath = path.relative(workspaceRoot, absolutePath);
     collectedFiles.set(
-      toSandboxPath(relativePath),
+      toSandboxPath(sandboxPath),
       await readFile(absolutePath, "utf8")
     );
   };
 
-  const addDirectory = async (absolutePath: string) => {
+  const addDirectory = async (absolutePath: string, sandboxDirectory: string) => {
     if (!(await pathExists(absolutePath))) return;
 
     for (const filePath of await collectFilesRecursively(absolutePath)) {
-      await addFile(filePath);
+      await addFile(
+        filePath,
+        path.posix.join(
+          sandboxDirectory,
+          toSandboxPath(path.relative(absolutePath, filePath))
+        )
+      );
     }
   };
 
   const collectCommands = async (
     commandsDirectory: string,
+    sandboxDirectory: string,
     category: string,
     pluginId?: string
   ) => {
@@ -283,7 +387,10 @@ export async function discoverClaudeRuntimeCatalog(
         category,
         hint: frontmatter["argument-hint"],
         pluginId,
-        sourcePath: toSandboxPath(path.relative(workspaceRoot, filePath)),
+        sourcePath: path.posix.join(
+          sandboxDirectory,
+          toSandboxPath(path.relative(commandsDirectory, filePath))
+        ),
       });
     }
 
@@ -292,6 +399,7 @@ export async function discoverClaudeRuntimeCatalog(
 
   const collectSkills = async (
     skillsDirectory: string,
+    sandboxDirectory: string,
     category: string,
     pluginId?: string
   ) => {
@@ -311,43 +419,72 @@ export async function discoverClaudeRuntimeCatalog(
           frontmatter.description || humanizeName(skillDirectoryName),
         category,
         pluginId,
-        sourcePath: toSandboxPath(path.relative(workspaceRoot, filePath)),
+        sourcePath: path.posix.join(
+          sandboxDirectory,
+          toSandboxPath(path.relative(skillsDirectory, filePath))
+        ),
       });
     }
 
     return files.length;
   };
 
-  const settingsPath = path.join(workspaceRoot, ".claude", "settings.json");
-  if (!(await pathExists(settingsPath))) {
-    return {
-      plugins: [],
-      commands: [],
-      skills: [],
-      files: [],
-      networkHosts: [],
-    };
+  const settingsPath = workspaceRoot
+    ? path.join(workspaceRoot, ".claude", "settings.json")
+    : null;
+  const settings =
+    settingsPath && (await pathExists(settingsPath))
+      ? await readJsonFile<ClaudeSettings>(settingsPath)
+      : null;
+
+  if (workspaceRoot) {
+    await addFile(
+      path.join(workspaceRoot, ".claude", "settings.local.json"),
+      ".claude/settings.local.json"
+    );
+    await addDirectory(
+      path.join(workspaceRoot, ".claude", "commands"),
+      ".claude/commands"
+    );
+    await addDirectory(
+      path.join(workspaceRoot, ".claude", "skills"),
+      ".claude/skills"
+    );
+
+    await collectCommands(
+      path.join(workspaceRoot, ".claude", "commands"),
+      ".claude/commands",
+      "Workspace"
+    );
+    await collectSkills(
+      path.join(workspaceRoot, ".claude", "skills"),
+      ".claude/skills",
+      "Workspace"
+    );
   }
 
-  await addFile(settingsPath);
-  await addFile(path.join(workspaceRoot, ".claude", "settings.local.json"));
-  await addDirectory(path.join(workspaceRoot, ".claude", "commands"));
-  await addDirectory(path.join(workspaceRoot, ".claude", "skills"));
+  const marketplaces = pluginsDirectory
+    ? await discoverMarketplaceDirectories(pluginsDirectory)
+    : new Map<string, MarketplaceDirectory>();
 
-  await collectCommands(
-    path.join(workspaceRoot, ".claude", "commands"),
-    "Workspace"
-  );
-  await collectSkills(path.join(workspaceRoot, ".claude", "skills"), "Workspace");
+  const enabledPlugins =
+    settings && Object.keys(settings.enabledPlugins ?? {}).length > 0
+      ? Object.entries(settings.enabledPlugins ?? {})
+          .filter(([, enabled]) => enabled)
+          .map(([pluginKey]) => pluginKey)
+          .sort((left, right) => left.localeCompare(right))
+      : Array.from(marketplaces.values())
+          .flatMap((marketplace) =>
+            (marketplace.manifest.plugins ?? [])
+              .filter((plugin) => Boolean(plugin.name))
+              .map(
+                (plugin) =>
+                  `${plugin.name}@${marketplace.marketplaceName}`
+              )
+          )
+          .sort((left, right) => left.localeCompare(right));
 
-  const settings = await readJsonFile<ClaudeSettings>(settingsPath);
-  const enabledPlugins = Object.entries(settings.enabledPlugins ?? {})
-    .filter(([, enabled]) => enabled)
-    .sort(([left], [right]) => left.localeCompare(right));
-
-  const copiedMarketplaces = new Set<string>();
-
-  for (const [pluginKey] of enabledPlugins) {
+  for (const pluginKey of enabledPlugins) {
     const separatorIndex = pluginKey.lastIndexOf("@");
     if (separatorIndex <= 0 || separatorIndex === pluginKey.length - 1) {
       continue;
@@ -355,35 +492,26 @@ export async function discoverClaudeRuntimeCatalog(
 
     const pluginName = pluginKey.slice(0, separatorIndex);
     const marketplaceName = pluginKey.slice(separatorIndex + 1);
-    const marketplaceConfig =
-      settings.extraKnownMarketplaces?.[marketplaceName]?.source;
+    const marketplace = marketplaces.get(marketplaceName);
 
-    if (
-      !marketplaceConfig?.path ||
-      marketplaceConfig.source !== "directory"
-    ) {
+    if (!marketplace) {
       continue;
     }
 
-    const marketplaceRoot = path.resolve(workspaceRoot, marketplaceConfig.path);
-    const marketplaceManifestPath = path.join(
-      marketplaceRoot,
-      ".claude-plugin",
-      "marketplace.json"
+    const sandboxMarketplaceRoot = path.posix.join("plugins", marketplaceName);
+    sandboxSettingsMarketplaces[marketplaceName] = {
+      source: {
+        source: "directory",
+        path: sandboxMarketplaceRoot,
+      },
+    };
+
+    await addFile(
+      marketplace.manifestPath,
+      path.posix.join(sandboxMarketplaceRoot, ".claude-plugin", "marketplace.json")
     );
 
-    if (!(await pathExists(marketplaceManifestPath))) {
-      continue;
-    }
-
-    if (!copiedMarketplaces.has(marketplaceManifestPath)) {
-      await addFile(marketplaceManifestPath);
-      copiedMarketplaces.add(marketplaceManifestPath);
-    }
-
-    const marketplaceManifest =
-      await readJsonFile<ClaudeMarketplaceManifest>(marketplaceManifestPath);
-    const marketplacePlugin = marketplaceManifest.plugins?.find(
+    const marketplacePlugin = marketplace.manifest.plugins?.find(
       (plugin) => plugin.name === pluginName
     );
 
@@ -391,12 +519,17 @@ export async function discoverClaudeRuntimeCatalog(
       continue;
     }
 
-    const pluginRoot = path.resolve(marketplaceRoot, marketplacePlugin.source);
+    const pluginRoot = path.resolve(marketplace.root, marketplacePlugin.source);
     if (!(await pathExists(pluginRoot))) {
       continue;
     }
 
-    await addDirectory(pluginRoot);
+    const sandboxPluginRoot = path.posix.join(
+      sandboxMarketplaceRoot,
+      toSandboxPath(marketplacePlugin.source.replace(/^\.\//, ""))
+    );
+
+    await addDirectory(pluginRoot, sandboxPluginRoot);
 
     const pluginManifestPath = path.join(
       pluginRoot,
@@ -409,13 +542,16 @@ export async function discoverClaudeRuntimeCatalog(
 
     const displayName = humanizeName(pluginManifest?.name || pluginName);
     const pluginId = `${pluginName}@${marketplaceName}`;
+    sandboxEnabledPlugins[pluginId] = true;
     const commandCount = await collectCommands(
       path.join(pluginRoot, "commands"),
+      path.posix.join(sandboxPluginRoot, "commands"),
       displayName,
       pluginId
     );
     const skillCount = await collectSkills(
       path.join(pluginRoot, "skills"),
+      path.posix.join(sandboxPluginRoot, "skills"),
       displayName,
       pluginId
     );
@@ -446,6 +582,17 @@ export async function discoverClaudeRuntimeCatalog(
       }
     }
   }
+
+  const sandboxSettings = {
+    ...(settings ?? {}),
+    enabledPlugins: sandboxEnabledPlugins,
+    extraKnownMarketplaces: sandboxSettingsMarketplaces,
+  };
+
+  collectedFiles.set(
+    ".claude/settings.json",
+    JSON.stringify(sandboxSettings, null, 2)
+  );
 
   return {
     plugins,

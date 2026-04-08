@@ -24,11 +24,16 @@ afterEach(async () => {
 });
 
 describe("discoverClaudeRuntimeCatalog", () => {
-  it("builds plugins, commands, skills, sandbox files, and MCP hosts from enabled plugins only", async () => {
+  it("builds plugins from app/plugins and rewrites sandbox settings to that location", async () => {
     const workspaceRoot = await createTempWorkspace();
     const appRoot = path.join(workspaceRoot, "app");
 
     await mkdir(path.join(appRoot, "src"), { recursive: true });
+    await mkdir(path.join(workspaceRoot, ".git"), { recursive: true });
+    await writeFile(
+      path.join(appRoot, "package.json"),
+      JSON.stringify({ name: "finance-agent-test" }, null, 2)
+    );
     await mkdir(path.join(workspaceRoot, ".claude", "commands"), {
       recursive: true,
     });
@@ -37,8 +42,7 @@ describe("discoverClaudeRuntimeCatalog", () => {
     });
     await mkdir(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         ".claude-plugin"
@@ -47,8 +51,7 @@ describe("discoverClaudeRuntimeCatalog", () => {
     );
     await mkdir(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -58,8 +61,7 @@ describe("discoverClaudeRuntimeCatalog", () => {
     );
     await mkdir(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -69,8 +71,7 @@ describe("discoverClaudeRuntimeCatalog", () => {
     );
     await mkdir(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -81,8 +82,7 @@ describe("discoverClaudeRuntimeCatalog", () => {
     );
     await mkdir(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "equity-research",
@@ -140,8 +140,7 @@ description: Apply the local house style.
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         ".claude-plugin",
@@ -150,14 +149,8 @@ description: Apply the local house style.
       JSON.stringify(
         {
           plugins: [
-            {
-              name: "financial-analysis",
-              source: "./financial-analysis",
-            },
-            {
-              name: "equity-research",
-              source: "./equity-research",
-            },
+            { name: "financial-analysis", source: "./financial-analysis" },
+            { name: "equity-research", source: "./equity-research" },
           ],
         },
         null,
@@ -166,8 +159,7 @@ description: Apply the local house style.
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -175,18 +167,14 @@ description: Apply the local house style.
         "plugin.json"
       ),
       JSON.stringify(
-        {
-          name: "financial-analysis",
-          description: "Core finance workflows",
-        },
+        { name: "financial-analysis", description: "Core finance workflows" },
         null,
         2
       )
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -207,8 +195,7 @@ description: Apply the local house style.
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -223,8 +210,7 @@ argument-hint: "[ticker]"
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "financial-analysis",
@@ -240,8 +226,7 @@ description: Build a DCF model.
     );
     await writeFile(
       path.join(
-        workspaceRoot,
-        ".agents",
+        appRoot,
         "plugins",
         "financial-services-plugins",
         "equity-research",
@@ -249,10 +234,7 @@ description: Build a DCF model.
         "plugin.json"
       ),
       JSON.stringify(
-        {
-          name: "equity-research",
-          description: "Research workflows",
-        },
+        { name: "equity-research", description: "Research workflows" },
         null,
         2
       )
@@ -271,13 +253,11 @@ description: Build a DCF model.
       expect.arrayContaining([
         expect.objectContaining({
           name: "/ad-hoc",
-          description: "Run an ad hoc workflow",
           category: "Workspace",
           hint: "[task]",
         }),
         expect.objectContaining({
           name: "/dcf",
-          description: "Build a DCF valuation model",
           category: "Financial Analysis",
           hint: "[ticker]",
         }),
@@ -287,23 +267,120 @@ description: Build a DCF model.
       expect.arrayContaining([
         expect.objectContaining({
           name: "house-style",
-          description: "Apply the local house style.",
           category: "Workspace",
         }),
         expect.objectContaining({
           name: "dcf-model",
-          description: "Build a DCF model.",
           category: "Financial Analysis",
         }),
       ])
     );
     expect(catalog.files.map((file) => file.path)).toContain(
-      ".agents/plugins/financial-services-plugins/financial-analysis/commands/dcf.md"
+      "plugins/financial-services-plugins/financial-analysis/commands/dcf.md"
     );
     expect(catalog.files.map((file) => file.path)).not.toContain(
-      ".agents/plugins/financial-services-plugins/equity-research/.claude-plugin/plugin.json"
+      "plugins/financial-services-plugins/equity-research/.claude-plugin/plugin.json"
     );
     expect(catalog.networkHosts).toEqual(["mcp.daloopa.com"]);
+    expect(
+      catalog.files.find((file) => file.path === ".claude/settings.json")?.content
+    ).toContain('"path": "plugins/financial-services-plugins"');
+  });
+
+  it("falls back to app/plugins when no .claude settings exist", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const appRoot = path.join(workspaceRoot, "app");
+
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        ".claude-plugin"
+      ),
+      { recursive: true }
+    );
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        ".claude-plugin"
+      ),
+      { recursive: true }
+    );
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        "commands"
+      ),
+      { recursive: true }
+    );
+
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        ".claude-plugin",
+        "marketplace.json"
+      ),
+      JSON.stringify(
+        {
+          plugins: [{ name: "financial-analysis", source: "./financial-analysis" }],
+        },
+        null,
+        2
+      )
+    );
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        ".claude-plugin",
+        "plugin.json"
+      ),
+      JSON.stringify({ name: "financial-analysis" }, null, 2)
+    );
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        "commands",
+        "dcf.md"
+      ),
+      `---
+description: Build a DCF valuation model
+---
+`
+    );
+
+    const catalog = await discoverClaudeRuntimeCatalog(appRoot);
+
+    expect(catalog.plugins).toEqual([
+      expect.objectContaining({
+        id: "financial-analysis@financial-services-plugins",
+      }),
+    ]);
+    expect(catalog.commands).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "/dcf",
+          category: "Financial Analysis",
+        }),
+      ])
+    );
+    expect(
+      catalog.files.find((file) => file.path === ".claude/settings.json")?.content
+    ).toContain('"financial-analysis@financial-services-plugins": true');
   });
 });
 
