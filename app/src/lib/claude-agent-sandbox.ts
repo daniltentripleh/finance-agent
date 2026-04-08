@@ -1,3 +1,5 @@
+import { readFile, readdir, stat } from "node:fs/promises";
+import path from "node:path";
 import { Sandbox } from "@vercel/sandbox";
 import { SYSTEM_PROMPT } from "./system-prompt";
 
@@ -8,6 +10,45 @@ const CLAUDE_AGENT_SDK_VERSION = "0.2.92";
 const CLAUDE_CODE_VERSION = "2.1.92";
 const DEFAULT_SANDBOX_MODEL =
   process.env.ANTHROPIC_MODEL?.trim() || "claude-sonnet-4-20250514";
+
+interface SandboxWorkspaceFile {
+  path: string;
+  content: string;
+}
+
+interface ClaudeDesktopContext {
+  files: SandboxWorkspaceFile[];
+  networkHosts: string[];
+}
+
+interface ClaudeSettings {
+  enabledPlugins?: Record<string, boolean>;
+  extraKnownMarketplaces?: Record<
+    string,
+    {
+      source?: {
+        source?: string;
+        path?: string;
+      };
+    }
+  >;
+}
+
+interface ClaudeMarketplaceManifest {
+  plugins?: Array<{
+    name?: string;
+    source?: string;
+  }>;
+}
+
+interface ClaudeMcpConfig {
+  mcpServers?: Record<
+    string,
+    {
+      url?: string;
+    }
+  >;
+}
 
 export function buildSandboxPackageJson() {
   return JSON.stringify(
@@ -83,13 +124,211 @@ try {
 const SANDBOX_PACKAGE_JSON = buildSandboxPackageJson();
 const SANDBOX_AGENT_SCRIPT = buildSandboxAgentScript();
 
-function getInstallNetworkPolicy(useSnapshot: boolean) {
-  if (useSnapshot) {
-    return { allow: ["api.anthropic.com"] };
+async function pathExists(filePath: string) {
+  try {
+    await stat(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function toSandboxPath(relativePath: string) {
+  return relativePath.split(path.sep).join("/");
+}
+
+async function readJsonFile<T>(filePath: string) {
+  const raw = await readFile(filePath, "utf8");
+  return JSON.parse(raw) as T;
+}
+
+async function collectFilesRecursively(directoryPath: string): Promise<string[]> {
+  const entries = await readdir(directoryPath, { withFileTypes: true });
+  const files: string[] = [];
+
+  for (const entry of entries.sort((left, right) =>
+    left.name.localeCompare(right.name)
+  )) {
+    const fullPath = path.join(directoryPath, entry.name);
+
+    if (entry.isDirectory()) {
+      files.push(...(await collectFilesRecursively(fullPath)));
+      continue;
+    }
+
+    if (entry.isFile()) {
+      files.push(fullPath);
+    }
+  }
+
+  return files;
+}
+
+async function findClaudeWorkspaceRoot(startDirectory = process.cwd()) {
+  let currentDirectory = path.resolve(startDirectory);
+
+  while (true) {
+    if (
+      await pathExists(path.join(currentDirectory, ".claude", "settings.json"))
+    ) {
+      return currentDirectory;
+    }
+
+    const parentDirectory = path.dirname(currentDirectory);
+    if (parentDirectory === currentDirectory) {
+      return null;
+    }
+
+    currentDirectory = parentDirectory;
+  }
+}
+
+function extractHostname(rawUrl?: string) {
+  if (!rawUrl) return null;
+
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+export function buildSandboxNetworkAllowList(
+  useSnapshot: boolean,
+  pluginHosts: string[] = []
+) {
+  const allow = new Set<string>(["api.anthropic.com"]);
+
+  for (const host of pluginHosts) {
+    const normalizedHost = host.trim();
+    if (!normalizedHost) continue;
+    allow.add(normalizedHost);
+  }
+
+  if (!useSnapshot) {
+    allow.add("registry.npmjs.org");
+  }
+
+  return Array.from(allow);
+}
+
+function getInstallNetworkPolicy(useSnapshot: boolean, pluginHosts: string[]) {
+  return {
+    allow: buildSandboxNetworkAllowList(useSnapshot, pluginHosts),
+  };
+}
+
+export async function collectClaudeDesktopContext(
+  startDirectory = process.cwd()
+): Promise<ClaudeDesktopContext> {
+  const workspaceRoot = await findClaudeWorkspaceRoot(startDirectory);
+  if (!workspaceRoot) {
+    return { files: [], networkHosts: [] };
+  }
+
+  const collectedFiles = new Map<string, string>();
+  const networkHosts = new Set<string>();
+
+  const addFile = async (absolutePath: string) => {
+    if (!(await pathExists(absolutePath))) return;
+
+    const relativePath = path.relative(workspaceRoot, absolutePath);
+    collectedFiles.set(
+      toSandboxPath(relativePath),
+      await readFile(absolutePath, "utf8")
+    );
+  };
+
+  const addDirectory = async (absolutePath: string) => {
+    if (!(await pathExists(absolutePath))) return;
+
+    for (const filePath of await collectFilesRecursively(absolutePath)) {
+      await addFile(filePath);
+    }
+  };
+
+  const settingsPath = path.join(workspaceRoot, ".claude", "settings.json");
+  if (!(await pathExists(settingsPath))) {
+    return { files: [], networkHosts: [] };
+  }
+
+  await addFile(settingsPath);
+  await addFile(path.join(workspaceRoot, ".claude", "settings.local.json"));
+  await addDirectory(path.join(workspaceRoot, ".claude", "skills"));
+  await addDirectory(path.join(workspaceRoot, ".claude", "commands"));
+
+  const settings = await readJsonFile<ClaudeSettings>(settingsPath);
+  const enabledPlugins = Object.entries(settings.enabledPlugins ?? {}).filter(
+    ([, isEnabled]) => isEnabled
+  );
+
+  for (const [pluginKey] of enabledPlugins) {
+    const separatorIndex = pluginKey.lastIndexOf("@");
+    if (separatorIndex <= 0 || separatorIndex === pluginKey.length - 1) {
+      continue;
+    }
+
+    const pluginName = pluginKey.slice(0, separatorIndex);
+    const marketplaceName = pluginKey.slice(separatorIndex + 1);
+    const marketplacePath =
+      settings.extraKnownMarketplaces?.[marketplaceName]?.source?.path;
+    const marketplaceSourceType =
+      settings.extraKnownMarketplaces?.[marketplaceName]?.source?.source;
+
+    if (!marketplacePath || marketplaceSourceType !== "directory") {
+      continue;
+    }
+
+    const marketplaceRoot = path.resolve(workspaceRoot, marketplacePath);
+    const marketplaceManifestPath = path.join(
+      marketplaceRoot,
+      ".claude-plugin",
+      "marketplace.json"
+    );
+
+    if (!(await pathExists(marketplaceManifestPath))) {
+      continue;
+    }
+
+    await addFile(marketplaceManifestPath);
+
+    const marketplaceManifest =
+      await readJsonFile<ClaudeMarketplaceManifest>(marketplaceManifestPath);
+    const pluginSource = marketplaceManifest.plugins?.find(
+      (plugin) => plugin.name === pluginName
+    )?.source;
+
+    if (!pluginSource) {
+      continue;
+    }
+
+    const pluginRoot = path.resolve(marketplaceRoot, pluginSource);
+    if (!(await pathExists(pluginRoot))) {
+      continue;
+    }
+
+    await addDirectory(pluginRoot);
+
+    const mcpConfigPath = path.join(pluginRoot, ".mcp.json");
+    if (!(await pathExists(mcpConfigPath))) {
+      continue;
+    }
+
+    const mcpConfig = await readJsonFile<ClaudeMcpConfig>(mcpConfigPath);
+    for (const server of Object.values(mcpConfig.mcpServers ?? {})) {
+      const hostname = extractHostname(server.url);
+      if (hostname) {
+        networkHosts.add(hostname);
+      }
+    }
   }
 
   return {
-    allow: ["api.anthropic.com", "registry.npmjs.org"],
+    files: Array.from(collectedFiles, ([sandboxPath, content]) => ({
+      path: sandboxPath,
+      content,
+    })),
+    networkHosts: Array.from(networkHosts),
   };
 }
 
@@ -183,9 +422,11 @@ async function verifyClaudeCodeCli(sandbox: Sandbox, useSnapshot: boolean) {
 
 async function writeSandboxFiles(
   sandbox: Sandbox,
-  payload: { prompt: string; model: string; maxTurns: number; systemPrompt: string }
+  payload: { prompt: string; model: string; maxTurns: number; systemPrompt: string },
+  supportFiles: SandboxWorkspaceFile[]
 ) {
   await sandbox.writeFiles([
+    ...supportFiles,
     {
       path: "package.json",
       content: SANDBOX_PACKAGE_JSON,
@@ -208,6 +449,7 @@ export async function runClaudeAgentInSandbox(
 ) {
   let sandbox: Sandbox | null = null;
   const usesSnapshot = Boolean(SANDBOX_SNAPSHOT_ID);
+  const claudeDesktopContext = await collectClaudeDesktopContext();
 
   try {
     if (usesSnapshot) {
@@ -221,7 +463,10 @@ export async function runClaudeAgentInSandbox(
           ANTHROPIC_API_KEY: apiKey,
         },
         resources: { vcpus: 1 },
-        networkPolicy: getInstallNetworkPolicy(true),
+        networkPolicy: getInstallNetworkPolicy(
+          true,
+          claudeDesktopContext.networkHosts
+        ),
       });
     } else {
       sandbox = await Sandbox.create({
@@ -231,7 +476,10 @@ export async function runClaudeAgentInSandbox(
           ANTHROPIC_API_KEY: apiKey,
         },
         resources: { vcpus: 1 },
-        networkPolicy: getInstallNetworkPolicy(false),
+        networkPolicy: getInstallNetworkPolicy(
+          false,
+          claudeDesktopContext.networkHosts
+        ),
       });
     }
 
@@ -240,7 +488,7 @@ export async function runClaudeAgentInSandbox(
       model,
       maxTurns: 4,
       systemPrompt: SYSTEM_PROMPT,
-    });
+    }, claudeDesktopContext.files);
 
     if (!usesSnapshot) {
       await installSandboxDependencies(sandbox);
