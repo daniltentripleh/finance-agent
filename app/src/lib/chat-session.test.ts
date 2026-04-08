@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   CHAT_SESSION_COOKIE_NAME,
+  createChatSessionId,
   isValidSessionId,
   parseChatSessionCookie,
 } from "./chat-session";
@@ -34,5 +35,11 @@ describe("isValidSessionId", () => {
 describe("CHAT_SESSION_COOKIE_NAME", () => {
   it("uses a stable cookie name for anonymous chat sessions", () => {
     expect(CHAT_SESSION_COOKIE_NAME).toBe("finance_agent_chat_session");
+  });
+});
+
+describe("createChatSessionId", () => {
+  it("creates a uuid for new anonymous sessions", () => {
+    expect(isValidSessionId(createChatSessionId())).toBe(true);
   });
 });
