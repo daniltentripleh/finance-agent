@@ -3,11 +3,16 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getApiKeyMode } from "@/lib/agent-config";
+import type {
+  ClaudeCommandSummary,
+  ClaudePluginSummary,
+  ClaudeSkillSummary,
+  ClaudeUiCatalog,
+} from "@/lib/claude-runtime-catalog";
 import {
   pickDefaultModelId,
   type ChatModelOption,
 } from "@/lib/anthropic-models";
-import { COMMANDS, CATEGORIES, type Command } from "@/lib/commands";
 
 interface ChatMessage {
   id: string;
@@ -120,24 +125,28 @@ function SettingsModal({
 }
 
 function CommandPalette({
+  commands,
   filter,
   onSelect,
   visible,
 }: {
+  commands: ClaudeCommandSummary[];
   filter: string;
-  onSelect: (cmd: Command) => void;
+  onSelect: (cmd: ClaudeCommandSummary) => void;
   visible: boolean;
 }) {
   const filtered = useMemo(() => {
-    if (!filter) return COMMANDS.slice(0, 10);
+    if (!filter) return commands.slice(0, 10);
     const query = filter.toLowerCase();
-    return COMMANDS.filter(
-      (command) =>
-        command.name.toLowerCase().includes(query) ||
-        command.description.toLowerCase().includes(query) ||
-        command.category.toLowerCase().includes(query)
-    ).slice(0, 8);
-  }, [filter]);
+    return commands
+      .filter(
+        (command) =>
+          command.name.toLowerCase().includes(query) ||
+          command.description.toLowerCase().includes(query) ||
+          command.category.toLowerCase().includes(query)
+      )
+      .slice(0, 8);
+  }, [commands, filter]);
 
   if (!visible || filtered.length === 0) return null;
 
@@ -145,7 +154,7 @@ function CommandPalette({
     <div className="absolute bottom-full left-0 right-0 z-10 mb-2 max-h-72 overflow-y-auto rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] shadow-2xl">
       {filtered.map((command) => (
         <button
-          key={command.name}
+          key={command.sourcePath}
           onClick={() => onSelect(command)}
           className="flex w-full items-center gap-3 px-4 py-2.5 text-left transition-colors hover:bg-[var(--color-terminal-border)]"
         >
@@ -164,35 +173,134 @@ function CommandPalette({
   );
 }
 
-function WelcomeScreen({ onCommand }: { onCommand: (text: string) => void }) {
+function PluginCard({
+  plugin,
+  commands,
+  skills,
+  onCommand,
+}: {
+  plugin: ClaudePluginSummary;
+  commands: ClaudeCommandSummary[];
+  skills: ClaudeSkillSummary[];
+  onCommand: (text: string) => void;
+}) {
+  const pluginCommands = commands
+    .filter((command) => command.pluginId === plugin.id)
+    .slice(0, 4);
+  const pluginSkills = skills
+    .filter((skill) => skill.pluginId === plugin.id)
+    .slice(0, 3);
+
+  return (
+    <div className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4">
+      <div className="mb-3">
+        <h3 className="text-sm font-semibold text-[var(--color-terminal-accent)]">
+          {plugin.displayName}
+        </h3>
+        <p className="mt-1 text-xs text-[var(--color-terminal-muted)]">
+          {plugin.description}
+        </p>
+        <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-[var(--color-terminal-border)]">
+          {plugin.commandCount} commands • {plugin.skillCount} skills
+        </p>
+      </div>
+
+      {pluginCommands.length > 0 ? (
+        <div className="space-y-1.5">
+          {pluginCommands.map((command) => (
+            <button
+              key={command.sourcePath}
+              onClick={() =>
+                onCommand(
+                  `${command.name}${command.hint ? ` ${command.hint}` : ""}`
+                )
+              }
+              className="block w-full py-0.5 text-left text-xs transition-colors hover:text-[var(--color-terminal-accent)]"
+            >
+              <span className="text-[var(--color-terminal-green)]">
+                {command.name}
+              </span>{" "}
+              <span className="text-[var(--color-terminal-muted)]">
+                {command.description}
+              </span>
+            </button>
+          ))}
+        </div>
+      ) : (
+        <div className="space-y-1 text-xs text-[var(--color-terminal-muted)]">
+          {pluginSkills.map((skill) => (
+            <div key={skill.sourcePath}>
+              <span className="text-[var(--color-terminal-green)]">
+                {skill.name}
+              </span>{" "}
+              <span>{skill.description}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function WelcomeScreen({
+  commands,
+  plugins,
+  skills,
+  onCommand,
+}: {
+  commands: ClaudeCommandSummary[];
+  plugins: ClaudePluginSummary[];
+  skills: ClaudeSkillSummary[];
+  onCommand: (text: string) => void;
+}) {
+  const workspaceCommands = commands.filter((command) => !command.pluginId);
+  const workspaceSkills = skills.filter((skill) => !skill.pluginId);
+  const hasDiscoveredCapabilities =
+    plugins.length > 0 || workspaceCommands.length > 0 || workspaceSkills.length > 0;
+
   return (
     <div className="flex flex-1 items-center justify-center p-8">
-      <div className="w-full max-w-3xl">
+      <div className="w-full max-w-4xl">
         <div className="mb-10 text-center">
           <div className="mb-3 text-4xl font-bold text-[var(--color-terminal-green)]">
             $ finance-agent
           </div>
           <p className="text-sm text-[var(--color-terminal-muted)]">
-            Financial analysis powered by Claude&apos;s Agent SDK in Vercel
-            Sandbox
+            Dynamic Claude plugin and skill discovery powered by Vercel Sandbox
           </p>
         </div>
 
-        <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
-          {CATEGORIES.map((category) => (
-            <div
-              key={category}
-              className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4"
-            >
-              <h3 className="mb-3 text-sm font-semibold text-[var(--color-terminal-accent)]">
-                {category}
-              </h3>
-              <div className="space-y-1.5">
-                {COMMANDS.filter((command) => command.category === category)
-                  .slice(0, 4)
-                  .map((command) => (
+        {!hasDiscoveredCapabilities ? (
+          <div className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-5 text-sm text-[var(--color-terminal-muted)]">
+            No `.claude` commands, skills, or enabled plugins were discovered.
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+            {plugins.map((plugin) => (
+              <PluginCard
+                key={plugin.id}
+                plugin={plugin}
+                commands={commands}
+                skills={skills}
+                onCommand={onCommand}
+              />
+            ))}
+
+            {(workspaceCommands.length > 0 || workspaceSkills.length > 0) && (
+              <div className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4">
+                <div className="mb-3">
+                  <h3 className="text-sm font-semibold text-[var(--color-terminal-accent)]">
+                    Workspace
+                  </h3>
+                  <p className="mt-1 text-xs text-[var(--color-terminal-muted)]">
+                    Local `.claude` commands and skills discovered at runtime.
+                  </p>
+                </div>
+
+                <div className="space-y-1.5">
+                  {workspaceCommands.slice(0, 4).map((command) => (
                     <button
-                      key={command.name}
+                      key={command.sourcePath}
                       onClick={() =>
                         onCommand(
                           `${command.name}${command.hint ? ` ${command.hint}` : ""}`
@@ -208,22 +316,27 @@ function WelcomeScreen({ onCommand }: { onCommand: (text: string) => void }) {
                       </span>
                     </button>
                   ))}
-                {COMMANDS.filter((command) => command.category === category).length >
-                  4 && (
-                  <span className="text-xs text-[var(--color-terminal-border)]">
-                    +
-                    {COMMANDS.filter((command) => command.category === category)
-                      .length - 4}{" "}
-                    more
-                  </span>
-                )}
+
+                  {workspaceCommands.length === 0 &&
+                    workspaceSkills.slice(0, 3).map((skill) => (
+                      <div key={skill.sourcePath} className="py-0.5 text-xs">
+                        <span className="text-[var(--color-terminal-green)]">
+                          {skill.name}
+                        </span>{" "}
+                        <span className="text-[var(--color-terminal-muted)]">
+                          {skill.description}
+                        </span>
+                      </div>
+                    ))}
+                </div>
               </div>
-            </div>
-          ))}
-        </div>
+            )}
+          </div>
+        )}
 
         <p className="mt-8 text-center text-xs text-[var(--color-terminal-muted)]">
-          Choose a model for each message, then run any finance command.
+          Refresh the page after adding or removing `.claude` files or enabled
+          plugins to see the current catalog.
         </p>
       </div>
     </div>
@@ -248,10 +361,13 @@ function formatModelLabel(modelId?: string) {
 }
 
 export default function HomeClient({
+  catalog,
   serverHasApiKey,
 }: {
+  catalog: ClaudeUiCatalog;
   serverHasApiKey: boolean;
 }) {
+  const { commands, plugins, skills } = catalog;
   const { apiKey, setApiKey, loaded } = useApiKey();
   const [showSettings, setShowSettings] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
@@ -272,6 +388,16 @@ export default function HomeClient({
   });
   const hasAnyKey = apiKeyMode !== "missing";
   const canSend = hasAnyKey && Boolean(selectedModelId) && !isLoadingModels;
+  const inputPlaceholderExample = useMemo(() => {
+    const exampleCommand =
+      commands.find((command) => command.hint) ?? commands[0];
+
+    if (!exampleCommand) {
+      return "Ask a question or describe a task";
+    }
+
+    return `${exampleCommand.name}${exampleCommand.hint ? ` ${exampleCommand.hint}` : ""}`;
+  }, [commands]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -406,7 +532,11 @@ export default function HomeClient({
 
       setMessages((current) => [
         ...current,
-        createChatMessage("assistant", data.result || "", data.model || selectedModelId),
+        createChatMessage(
+          "assistant",
+          data.result || "",
+          data.model || selectedModelId
+        ),
       ]);
     } catch (caughtError) {
       setError(
@@ -417,7 +547,7 @@ export default function HomeClient({
     }
   }
 
-  function handleCommandSelect(command: Command) {
+  function handleCommandSelect(command: ClaudeCommandSummary) {
     setInput(`${command.name} `);
     setShowPalette(false);
     inputRef.current?.focus();
@@ -505,7 +635,12 @@ export default function HomeClient({
       )}
 
       {messages.length === 0 ? (
-        <WelcomeScreen onCommand={handleCommand} />
+        <WelcomeScreen
+          commands={commands}
+          plugins={plugins}
+          skills={skills}
+          onCommand={handleCommand}
+        />
       ) : (
         <div className="flex-1 overflow-y-auto p-6">
           <div className="mx-auto max-w-4xl space-y-6">
@@ -567,6 +702,7 @@ export default function HomeClient({
       <div className="shrink-0 border-t border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4">
         <form onSubmit={onSubmit} className="relative mx-auto max-w-4xl">
           <CommandPalette
+            commands={commands}
             filter={paletteFilter}
             onSelect={handleCommandSelect}
             visible={showPalette}
@@ -599,7 +735,7 @@ export default function HomeClient({
               onChange={onInputChange}
               placeholder={
                 canSend
-                  ? "Type a command (/earnings NVDA Q4 2024) or ask a question..."
+                  ? `Type a command (${inputPlaceholderExample}) or ask a question...`
                   : hasAnyKey
                     ? "Waiting for model list..."
                     : "Set your Anthropic API key first..."
