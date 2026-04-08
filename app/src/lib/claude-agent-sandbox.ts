@@ -4,6 +4,7 @@ import {
   discoverClaudeRuntimeCatalog,
   type SandboxWorkspaceFile,
 } from "./claude-runtime-catalog";
+import type { RuntimeAttachment } from "./chat-attachment-runtime";
 
 const SANDBOX_TIMEOUT_MS = 10 * 60 * 1000;
 const SANDBOX_SNAPSHOT_ID =
@@ -29,7 +30,8 @@ export function buildSandboxPackageJson() {
 }
 
 export function buildSandboxAgentScript() {
-  return `import { readFile } from "node:fs/promises";
+  return `import { mkdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { query } from "@anthropic-ai/claude-agent-sdk";
 
 const payload = JSON.parse(await readFile("./request.json", "utf8"));
@@ -38,7 +40,44 @@ let sessionId = null;
 let finalResult = "";
 let finalError = null;
 
+async function hydrateAttachments(attachments) {
+  if (!Array.isArray(attachments) || attachments.length === 0) {
+    return [];
+  }
+
+  const hydrated = [];
+
+  await mkdir(".attachments", { recursive: true });
+
+  for (const attachment of attachments) {
+    const response = await fetch(attachment.downloadUrl);
+
+    if (!response.ok) {
+      throw new Error(\`Failed to download attachment: \${attachment.originalName}\`);
+    }
+
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    const targetPath = path.resolve(process.cwd(), attachment.sandboxPath);
+
+    await mkdir(path.dirname(targetPath), { recursive: true });
+    await writeFile(targetPath, bytes);
+
+    hydrated.push({
+      id: attachment.id,
+      originalName: attachment.originalName,
+      mimeType: attachment.mimeType ?? null,
+      byteSize: attachment.byteSize ?? null,
+      sandboxPath: attachment.sandboxPath,
+    });
+  }
+
+  await writeFile("./attachment-manifest.json", JSON.stringify(hydrated, null, 2));
+  return hydrated;
+}
+
 try {
+  await hydrateAttachments(payload.attachments ?? []);
+
   for await (const message of query({
     prompt: payload.prompt,
     options: {
@@ -86,9 +125,38 @@ try {
 const SANDBOX_PACKAGE_JSON = buildSandboxPackageJson();
 const SANDBOX_AGENT_SCRIPT = buildSandboxAgentScript();
 
-function getInstallNetworkPolicy(useSnapshot: boolean, pluginHosts: string[]) {
+function extractHost(rawUrl: string) {
+  try {
+    return new URL(rawUrl).hostname;
+  } catch {
+    return null;
+  }
+}
+
+function getAttachmentNetworkHosts(attachments: RuntimeAttachment[]) {
+  const hosts = new Set<string>();
+
+  for (const attachment of attachments) {
+    const host = extractHost(attachment.downloadUrl);
+
+    if (host) {
+      hosts.add(host);
+    }
+  }
+
+  return Array.from(hosts);
+}
+
+function getInstallNetworkPolicy(
+  useSnapshot: boolean,
+  pluginHosts: string[],
+  attachmentHosts: string[] = []
+) {
   return {
-    allow: buildSandboxNetworkAllowList(useSnapshot, pluginHosts),
+    allow: buildSandboxNetworkAllowList(useSnapshot, [
+      ...pluginHosts,
+      ...attachmentHosts,
+    ]),
   };
 }
 
@@ -182,7 +250,12 @@ async function verifyClaudeCodeCli(sandbox: Sandbox, useSnapshot: boolean) {
 
 async function writeSandboxFiles(
   sandbox: Sandbox,
-  payload: { prompt: string; model: string; maxTurns: number },
+  payload: {
+    prompt: string;
+    model: string;
+    maxTurns: number;
+    attachments: RuntimeAttachment[];
+  },
   supportFiles: SandboxWorkspaceFile[]
 ) {
   await sandbox.writeFiles([
@@ -205,11 +278,13 @@ async function writeSandboxFiles(
 export async function runClaudeAgentInSandbox(
   prompt: string,
   apiKey: string,
-  model = DEFAULT_SANDBOX_MODEL
+  model = DEFAULT_SANDBOX_MODEL,
+  attachments: RuntimeAttachment[] = []
 ) {
   let sandbox: Sandbox | null = null;
   const usesSnapshot = Boolean(SANDBOX_SNAPSHOT_ID);
   const claudeRuntimeCatalog = await discoverClaudeRuntimeCatalog();
+  const attachmentHosts = getAttachmentNetworkHosts(attachments);
 
   try {
     if (usesSnapshot) {
@@ -225,7 +300,8 @@ export async function runClaudeAgentInSandbox(
         resources: { vcpus: 1 },
         networkPolicy: getInstallNetworkPolicy(
           true,
-          claudeRuntimeCatalog.networkHosts
+          claudeRuntimeCatalog.networkHosts,
+          attachmentHosts
         ),
       });
     } else {
@@ -238,7 +314,8 @@ export async function runClaudeAgentInSandbox(
         resources: { vcpus: 1 },
         networkPolicy: getInstallNetworkPolicy(
           false,
-          claudeRuntimeCatalog.networkHosts
+          claudeRuntimeCatalog.networkHosts,
+          attachmentHosts
         ),
       });
     }
@@ -247,6 +324,7 @@ export async function runClaudeAgentInSandbox(
       prompt,
       model,
       maxTurns: 4,
+      attachments,
     }, claudeRuntimeCatalog.files);
 
     if (!usesSnapshot) {

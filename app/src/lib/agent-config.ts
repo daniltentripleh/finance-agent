@@ -10,6 +10,12 @@ export interface PromptMessage {
   content: string;
 }
 
+export interface PromptAttachment {
+  id: string;
+  originalName: string;
+  sandboxPath: string;
+}
+
 function normalizeKey(value?: string | null) {
   const trimmed = value?.trim() ?? "";
   return trimmed.length > 0 ? trimmed : null;
@@ -40,7 +46,10 @@ export function normalizePrompt(prompt: string) {
   return normalized;
 }
 
-export function buildConversationPrompt(messages: PromptMessage[]) {
+export function buildConversationPrompt(
+  messages: PromptMessage[],
+  attachments: PromptAttachment[] = []
+) {
   const transcript = messages
     .map((message) => {
       const normalizedContent = message.content.trim();
@@ -51,5 +60,15 @@ export function buildConversationPrompt(messages: PromptMessage[]) {
     .filter((message): message is string => Boolean(message))
     .join("\n\n");
 
-  return normalizePrompt(transcript);
+  const attachmentBlock =
+    attachments.length > 0
+      ? `Attached files:\n${attachments
+          .map(
+            (attachment) =>
+              `- ${attachment.originalName} => ${attachment.sandboxPath}`
+          )
+          .join("\n")}\n\n`
+      : "";
+
+  return normalizePrompt(`${attachmentBlock}${transcript}`);
 }

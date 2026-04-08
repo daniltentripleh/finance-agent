@@ -97,4 +97,21 @@ describe("buildConversationPrompt", () => {
       ])
     ).toThrow("Prompt is required.");
   });
+
+  it("prepends attachment context to the conversation prompt", () => {
+    expect(
+      buildConversationPrompt(
+        [{ role: "user", content: "Summarize this file" }],
+        [
+          {
+            id: "a1",
+            originalName: "budget.xlsx",
+            sandboxPath: ".attachments/budget.xlsx",
+          },
+        ]
+      )
+    ).toContain(
+      "Attached files:\n- budget.xlsx => .attachments/budget.xlsx"
+    );
+  });
 });
