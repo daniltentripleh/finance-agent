@@ -18,6 +18,7 @@ import {
   pickDefaultModelId,
   type ChatModelOption,
 } from "@/lib/anthropic-models";
+import type { Locale } from "@/lib/i18n";
 
 interface ChatMessage {
   id: string;
@@ -352,11 +353,14 @@ function formatModelLabel(modelId?: string) {
 
 export default function HomeClient({
   catalog,
+  initialLocale,
   serverHasApiKey,
 }: {
   catalog: ClaudeUiCatalog;
+  initialLocale: Locale;
   serverHasApiKey: boolean;
 }) {
+  const [_locale, _setLocale] = useState(initialLocale);
   const { commands, plugins, skills } = catalog;
   const { apiKey, setApiKey, loaded } = useApiKey();
   const [showSettings, setShowSettings] = useState(false);
