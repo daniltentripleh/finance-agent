@@ -46,6 +46,7 @@ try {
       permissionMode: "dontAsk",
       pathToClaudeCodeExecutable: "claude",
       env: {
+        ...process.env,
         ANTHROPIC_API_KEY: process.env.ANTHROPIC_API_KEY,
         CLAUDE_AGENT_SDK_CLIENT_APP: "finance-agent-vercel-sandbox"
       }
@@ -107,6 +108,14 @@ export function sanitizeSandboxErrorMessage(
   }
 
   if (trimmed.includes("Claude Code process exited with code 127")) {
+    if (options?.usesSnapshot) {
+      return "Claude Code CLI could not start inside the Vercel sandbox snapshot. Rebuild the snapshot so it includes a working global Claude Code CLI installation.";
+    }
+
+    return "Claude Code CLI could not start inside the Vercel sandbox. Redeploy so the latest sandbox bootstrap can reinstall the CLI.";
+  }
+
+  if (trimmed.includes("Claude Code native binary not found at claude")) {
     if (options?.usesSnapshot) {
       return "Claude Code CLI could not start inside the Vercel sandbox snapshot. Rebuild the snapshot so it includes a working global Claude Code CLI installation.";
     }
