@@ -18,6 +18,7 @@ build/
 .mcp.json
 
 # playwright
+.playwright-cli/
 .playwright-mcp/
 
 # os files
@@ -34,4 +35,6 @@ yarn-error.log*
 *.pem
 *.tsbuildinfo
 next-env.d.ts
+output/
 .worktrees/
+scripts/
