@@ -9,6 +9,11 @@ import type {
   ClaudeSkillSummary,
   ClaudeUiCatalog,
 } from "@/lib/claude-runtime-catalog";
+import { formatCatalogForChat } from "@/lib/claude-chat-catalog";
+import {
+  getCommandCompletionValue,
+  getCommandPaletteMatches,
+} from "@/lib/command-palette";
 import {
   pickDefaultModelId,
   type ChatModelOption,
@@ -125,29 +130,14 @@ function SettingsModal({
 }
 
 function CommandPalette({
-  commands,
-  filter,
+  filtered,
   onSelect,
   visible,
 }: {
-  commands: ClaudeCommandSummary[];
-  filter: string;
+  filtered: ClaudeCommandSummary[];
   onSelect: (cmd: ClaudeCommandSummary) => void;
   visible: boolean;
 }) {
-  const filtered = useMemo(() => {
-    if (!filter) return commands.slice(0, 10);
-    const query = filter.toLowerCase();
-    return commands
-      .filter(
-        (command) =>
-          command.name.toLowerCase().includes(query) ||
-          command.description.toLowerCase().includes(query) ||
-          command.category.toLowerCase().includes(query)
-      )
-      .slice(0, 8);
-  }, [commands, filter]);
-
   if (!visible || filtered.length === 0) return null;
 
   return (
@@ -370,7 +360,20 @@ export default function HomeClient({
   const { commands, plugins, skills } = catalog;
   const { apiKey, setApiKey, loaded } = useApiKey();
   const [showSettings, setShowSettings] = useState(false);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const catalogIntroMessage = useMemo(() => {
+    if (
+      catalog.plugins.length === 0 &&
+      catalog.commands.length === 0 &&
+      catalog.skills.length === 0
+    ) {
+      return null;
+    }
+
+    return createChatMessage("assistant", formatCatalogForChat(catalog));
+  }, [catalog]);
+  const [messages, setMessages] = useState<ChatMessage[]>(() =>
+    catalogIntroMessage ? [catalogIntroMessage] : []
+  );
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -482,6 +485,10 @@ export default function HomeClient({
   }, [apiKey, loaded, serverHasApiKey]);
 
   const paletteFilter = input.startsWith("/") ? input.slice(1) : "";
+  const filteredCommands = useMemo(
+    () => getCommandPaletteMatches(commands, paletteFilter),
+    [commands, paletteFilter]
+  );
 
   async function sendPrompt(promptValue: string) {
     const trimmedPrompt = promptValue.trim();
@@ -548,7 +555,7 @@ export default function HomeClient({
   }
 
   function handleCommandSelect(command: ClaudeCommandSummary) {
-    setInput(`${command.name} `);
+    setInput(getCommandCompletionValue(command));
     setShowPalette(false);
     inputRef.current?.focus();
   }
@@ -565,6 +572,18 @@ export default function HomeClient({
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     void sendPrompt(input);
+  }
+
+  function onInputKeyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (
+      event.key === "Tab" &&
+      !event.shiftKey &&
+      showPalette &&
+      filteredCommands.length > 0
+    ) {
+      event.preventDefault();
+      handleCommandSelect(filteredCommands[0]);
+    }
   }
 
   const statusText =
@@ -702,8 +721,7 @@ export default function HomeClient({
       <div className="shrink-0 border-t border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4">
         <form onSubmit={onSubmit} className="relative mx-auto max-w-4xl">
           <CommandPalette
-            commands={commands}
-            filter={paletteFilter}
+            filtered={filteredCommands}
             onSelect={handleCommandSelect}
             visible={showPalette}
           />
@@ -742,6 +760,7 @@ export default function HomeClient({
               }
               className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-terminal-muted)]"
               disabled={isLoading}
+              onKeyDown={onInputKeyDown}
             />
             <button
               type="submit"

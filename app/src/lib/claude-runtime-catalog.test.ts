@@ -6,6 +6,7 @@ import {
   buildSandboxNetworkAllowList,
   discoverClaudeRuntimeCatalog,
 } from "./claude-runtime-catalog";
+import { formatCatalogForChat } from "./claude-chat-catalog";
 
 const tempDirs: string[] = [];
 
@@ -404,5 +405,67 @@ describe("buildSandboxNetworkAllowList", () => {
       "api.anthropic.com",
       "mcp.daloopa.com",
     ]);
+  });
+});
+
+describe("formatCatalogForChat", () => {
+  it("renders the discovered plugin, command, and skill structure as markdown", () => {
+    const message = formatCatalogForChat({
+      plugins: [
+        {
+          id: "financial-analysis@financial-services-plugins",
+          marketplace: "financial-services-plugins",
+          name: "financial-analysis",
+          displayName: "Financial Analysis",
+          description: "Core finance workflows",
+          commandCount: 2,
+          skillCount: 2,
+        },
+      ],
+      commands: [
+        {
+          name: "/dcf",
+          description: "Build a DCF model",
+          category: "Financial Analysis",
+          pluginId: "financial-analysis@financial-services-plugins",
+          sourcePath: "plugins/financial-services-plugins/financial-analysis/commands/dcf.md",
+        },
+        {
+          name: "/ad-hoc",
+          description: "Run an ad hoc workflow",
+          category: "Workspace",
+          sourcePath: ".claude/commands/ad-hoc.md",
+        },
+      ],
+      skills: [
+        {
+          name: "dcf-model",
+          description: "Build a DCF model.",
+          category: "Financial Analysis",
+          pluginId: "financial-analysis@financial-services-plugins",
+          sourcePath: "plugins/financial-services-plugins/financial-analysis/skills/dcf-model/SKILL.md",
+        },
+        {
+          name: "house-style",
+          description: "Apply the local house style.",
+          category: "Workspace",
+          sourcePath: ".claude/skills/house-style/SKILL.md",
+        },
+      ],
+    });
+
+    expect(message).toContain("## Available runtime capabilities");
+    expect(message).toContain("### Financial Analysis");
+    expect(message).toContain("- Commands: `/dcf`");
+    expect(message).toContain("- Skills: `dcf-model`");
+    expect(message).toContain("### Workspace");
+    expect(message).toContain("- Commands: `/ad-hoc`");
+    expect(message).toContain("- Skills: `house-style`");
+  });
+
+  it("returns an empty-state message when the catalog has no capabilities", () => {
+    expect(
+      formatCatalogForChat({ plugins: [], commands: [], skills: [] })
+    ).toBe("No runtime plugins, commands, or skills were discovered.");
   });
 });
