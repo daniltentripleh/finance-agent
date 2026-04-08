@@ -383,6 +383,103 @@ description: Build a DCF valuation model
       catalog.files.find((file) => file.path === ".claude/settings.json")?.content
     ).toContain('"financial-analysis@financial-services-plugins": true');
   });
+
+  it("parses multiline block descriptions from skill frontmatter", async () => {
+    const workspaceRoot = await createTempWorkspace();
+    const appRoot = path.join(workspaceRoot, "app");
+
+    await mkdir(path.join(workspaceRoot, ".git"), { recursive: true });
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        ".claude-plugin"
+      ),
+      { recursive: true }
+    );
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        ".claude-plugin"
+      ),
+      { recursive: true }
+    );
+    await mkdir(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        "skills",
+        "comps-analysis"
+      ),
+      { recursive: true }
+    );
+
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        ".claude-plugin",
+        "marketplace.json"
+      ),
+      JSON.stringify(
+        {
+          plugins: [{ name: "financial-analysis", source: "./financial-analysis" }],
+        },
+        null,
+        2
+      )
+    );
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        ".claude-plugin",
+        "plugin.json"
+      ),
+      JSON.stringify({ name: "financial-analysis" }, null, 2)
+    );
+    await writeFile(
+      path.join(
+        appRoot,
+        "plugins",
+        "financial-services-plugins",
+        "financial-analysis",
+        "skills",
+        "comps-analysis",
+        "SKILL.md"
+      ),
+      `---
+name: comps-analysis
+description: |
+  Build institutional-grade comparable company analyses.
+
+  - Compare peers
+  - Benchmark valuation
+---
+`
+    );
+
+    const catalog = await discoverClaudeRuntimeCatalog(appRoot);
+
+    expect(catalog.skills).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "comps-analysis",
+          description:
+            "Build institutional-grade comparable company analyses.\n\n- Compare peers\n- Benchmark valuation",
+        }),
+      ])
+    );
+  });
 });
 
 describe("buildSandboxNetworkAllowList", () => {

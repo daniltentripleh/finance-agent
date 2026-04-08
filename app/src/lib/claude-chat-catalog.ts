@@ -1,18 +1,23 @@
 import type {
   ClaudeCommandSummary,
+  ClaudePluginSummary,
   ClaudeSkillSummary,
   ClaudeUiCatalog,
 } from "@/lib/claude-runtime-catalog";
 
-interface CatalogCapabilityGroup {
+export interface CatalogCapabilityGroup {
   heading: string;
+  plugin?: ClaudePluginSummary;
+  description: string;
   commands: ClaudeCommandSummary[];
   skills: ClaudeSkillSummary[];
 }
 
-function buildCatalogCapabilityGroups(catalog: ClaudeUiCatalog) {
+export function buildCatalogCapabilityGroups(catalog: ClaudeUiCatalog) {
   const groups: CatalogCapabilityGroup[] = catalog.plugins.map((plugin) => ({
     heading: plugin.displayName,
+    plugin,
+    description: plugin.description,
     commands: catalog.commands.filter((command) => command.pluginId === plugin.id),
     skills: catalog.skills.filter((skill) => skill.pluginId === plugin.id),
   }));
@@ -23,6 +28,7 @@ function buildCatalogCapabilityGroups(catalog: ClaudeUiCatalog) {
   if (workspaceCommands.length > 0 || workspaceSkills.length > 0) {
     groups.push({
       heading: "Workspace",
+      description: "Local `.claude` commands and skills discovered at runtime.",
       commands: workspaceCommands,
       skills: workspaceSkills,
     });

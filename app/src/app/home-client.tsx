@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getApiKeyMode } from "@/lib/agent-config";
@@ -630,6 +631,12 @@ export default function HomeClient({
           <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-xs text-[var(--color-terminal-muted)]">
             claude-agent-sdk
           </span>
+          <Link
+            href="/docs"
+            className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-xs text-[var(--color-terminal-accent)] transition-colors hover:border-[var(--color-terminal-accent)] hover:text-[var(--color-terminal-text)]"
+          >
+            docs
+          </Link>
         </div>
         <div className="flex items-center gap-4 text-xs text-[var(--color-terminal-muted)]">
           <span>{modelStatus}</span>

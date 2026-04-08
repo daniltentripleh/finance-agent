@@ -151,20 +151,45 @@ async function readFrontmatter(filePath: string): Promise<FrontmatterValues> {
     return {};
   }
 
-  const frontmatter = raw
-    .slice(3, endIndex)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const frontmatter = raw.slice(3, endIndex).split(/\r?\n/);
 
   const values: FrontmatterValues = {};
 
-  for (const line of frontmatter) {
+  for (let index = 0; index < frontmatter.length; index += 1) {
+    const line = frontmatter[index];
+    if (!line.trim()) continue;
+
     const separatorIndex = line.indexOf(":");
     if (separatorIndex === -1) continue;
 
     const key = line.slice(0, separatorIndex).trim() as keyof FrontmatterValues;
     let value = line.slice(separatorIndex + 1).trim();
+
+    if (value === "|" || value === ">") {
+      const blockLines: string[] = [];
+      index += 1;
+
+      while (index < frontmatter.length) {
+        const nextLine = frontmatter[index];
+
+        if (!nextLine.trim()) {
+          blockLines.push("");
+          index += 1;
+          continue;
+        }
+
+        if (/^\s/.test(nextLine)) {
+          blockLines.push(nextLine.trim());
+          index += 1;
+          continue;
+        }
+
+        index -= 1;
+        break;
+      }
+
+      value = blockLines.join("\n").trim();
+    }
 
     if (
       (value.startsWith('"') && value.endsWith('"')) ||
