@@ -78,6 +78,21 @@ export function mapAttachmentRecordToClient(record: ChatAttachmentRecord) {
   };
 }
 
+export function mergeAttachmentState<T extends { id: string }>(
+  current: T[],
+  next: T
+) {
+  const index = current.findIndex((attachment) => attachment.id === next.id);
+
+  if (index === -1) {
+    return [...current, next];
+  }
+
+  return current.map((attachment) =>
+    attachment.id === next.id ? next : attachment
+  );
+}
+
 export async function listActiveAttachmentsForSession(
   supabase: any,
   sessionId: string

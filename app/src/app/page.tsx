@@ -19,6 +19,12 @@ export default async function Home() {
         plugins: catalog.plugins,
         skills: catalog.skills,
       }}
+      attachmentsEnabled={
+        Boolean(process.env.NEXT_PUBLIC_SUPABASE_URL?.trim()) &&
+        Boolean(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY?.trim()) &&
+        Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY?.trim()) &&
+        Boolean(process.env.SUPABASE_ATTACHMENTS_BUCKET?.trim())
+      }
       initialLocale={initialLocale}
       serverHasApiKey={Boolean(process.env.ANTHROPIC_API_KEY?.trim())}
     />

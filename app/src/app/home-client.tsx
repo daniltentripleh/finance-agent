@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { createClient } from "@supabase/supabase-js";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getApiKeyMode } from "@/lib/agent-config";
@@ -19,6 +20,7 @@ import {
   getCommandCompletionValue,
   getCommandPaletteMatches,
 } from "@/lib/command-palette";
+import { mergeAttachmentState } from "@/lib/chat-attachments";
 import {
   getDictionary,
   type Dictionary,
@@ -31,6 +33,16 @@ interface ChatMessage {
   role: "user" | "assistant";
   content: string;
   modelId?: string;
+}
+
+interface ChatAttachment {
+  id: string;
+  attachmentId?: string;
+  originalName: string;
+  mimeType?: string | null;
+  byteSize?: number | null;
+  status: "uploading" | "ready" | "failed";
+  error?: string | null;
 }
 
 function useApiKey() {
@@ -369,10 +381,12 @@ function formatModelLabel(dictionary: Dictionary, modelId?: string) {
 
 export default function HomeClient({
   catalog,
+  attachmentsEnabled,
   initialLocale,
   serverHasApiKey,
 }: {
   catalog: ClaudeUiCatalog;
+  attachmentsEnabled: boolean;
   initialLocale: Locale;
   serverHasApiKey: boolean;
 }) {
@@ -398,13 +412,30 @@ export default function HomeClient({
   const [input, setInput] = useState("");
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [attachments, setAttachments] = useState<ChatAttachment[]>([]);
   const [showPalette, setShowPalette] = useState(false);
   const [models, setModels] = useState<ChatModelOption[]>([]);
   const [selectedModelId, setSelectedModelId] = useState("");
   const [isLoadingModels, setIsLoadingModels] = useState(false);
   const [modelsError, setModelsError] = useState<string | null>(null);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const supabaseBrowserClient = useMemo(() => {
+    const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+    const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+
+    if (!attachmentsEnabled || !url || !anonKey) {
+      return null;
+    }
+
+    return createClient(url, anonKey, {
+      auth: {
+        autoRefreshToken: false,
+        persistSession: false,
+      },
+    });
+  }, [attachmentsEnabled]);
 
   const apiKeyMode = getApiKeyMode({
     serverApiKey: serverHasApiKey ? "configured" : "",
@@ -412,6 +443,9 @@ export default function HomeClient({
   });
   const hasAnyKey = apiKeyMode !== "missing";
   const canSend = hasAnyKey && Boolean(selectedModelId) && !isLoadingModels;
+  const hasUploadingAttachments = attachments.some(
+    (attachment) => attachment.status === "uploading"
+  );
   const inputPlaceholderExample = useMemo(() => {
     const exampleCommand =
       commands.find((command) => command.hint) ?? commands[0];
@@ -510,6 +544,66 @@ export default function HomeClient({
     };
   }, [apiKey, dictionary.home.chat.failedLoadModels, loaded, serverHasApiKey]);
 
+  useEffect(() => {
+    if (!attachmentsEnabled) {
+      setAttachments([]);
+      return;
+    }
+
+    let cancelled = false;
+
+    async function bootstrapChatSession() {
+      try {
+        const response = await fetch("/api/chat/session", {
+          method: "POST",
+        });
+        const data = (await response.json()) as {
+          attachments?: Array<{
+            id: string;
+            originalName: string;
+            mimeType?: string | null;
+            byteSize?: number | null;
+            status: string;
+          }>;
+          error?: string;
+        };
+
+        if (!response.ok) {
+          throw new Error(data.error || "Attachments are unavailable right now.");
+        }
+
+        if (cancelled) {
+          return;
+        }
+
+        setAttachments(
+          (data.attachments ?? []).map((attachment) => ({
+            id: attachment.id,
+            attachmentId: attachment.id,
+            originalName: attachment.originalName,
+            mimeType: attachment.mimeType ?? null,
+            byteSize: attachment.byteSize ?? null,
+            status: attachment.status === "uploaded" ? "ready" : "uploading",
+          }))
+        );
+      } catch (caughtError) {
+        if (!cancelled) {
+          setError(
+            caughtError instanceof Error
+              ? caughtError.message
+              : "Attachments are unavailable right now."
+          );
+        }
+      }
+    }
+
+    void bootstrapChatSession();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [attachmentsEnabled]);
+
   const paletteFilter = input.startsWith("/") ? input.slice(1) : "";
   const filteredCommands = useMemo(
     () => getCommandPaletteMatches(commands, paletteFilter),
@@ -527,6 +621,11 @@ export default function HomeClient({
 
     if (!selectedModelId) {
       setModelsError(dictionary.home.chat.chooseModelFirst);
+      return;
+    }
+
+    if (hasUploadingAttachments) {
+      setError("Finish uploading files before sending.");
       return;
     }
 
@@ -549,6 +648,12 @@ export default function HomeClient({
           prompt: trimmedPrompt,
           messages: nextMessages.map(({ role, content }) => ({ role, content })),
           apiKey: apiKey || undefined,
+          attachmentIds: attachments
+            .filter(
+              (attachment) =>
+                attachment.status === "ready" && Boolean(attachment.attachmentId)
+            )
+            .map((attachment) => attachment.attachmentId),
           model: selectedModelId,
         }),
       });
@@ -595,6 +700,151 @@ export default function HomeClient({
   function onInputChange(event: React.ChangeEvent<HTMLInputElement>) {
     setInput(event.target.value);
     setShowPalette(event.target.value.startsWith("/"));
+  }
+
+  async function uploadAttachment(file: File) {
+    const localId = crypto.randomUUID();
+
+    setAttachments((current) =>
+      mergeAttachmentState<ChatAttachment>(current, {
+        id: localId,
+        originalName: file.name,
+        mimeType: file.type || null,
+        byteSize: file.size,
+        status: "uploading",
+      })
+    );
+
+    try {
+      const signResponse = await fetch("/api/attachments/sign", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileName: file.name,
+          contentType: file.type || null,
+          byteSize: file.size,
+        }),
+      });
+      const signData = (await signResponse.json()) as {
+        bucket?: string;
+        attachment?: {
+          id: string;
+          originalName: string;
+          mimeType?: string | null;
+          byteSize?: number | null;
+        };
+        upload?: {
+          path: string;
+          token: string;
+        };
+        error?: string;
+      };
+
+      if (!signResponse.ok || !signData.attachment || !signData.upload || !signData.bucket) {
+        throw new Error(signData.error || "Upload failed.");
+      }
+
+      if (!supabaseBrowserClient) {
+        throw new Error("Supabase attachments are not configured in this environment.");
+      }
+
+      const uploadResult = await supabaseBrowserClient.storage
+        .from(signData.bucket)
+        .uploadToSignedUrl(signData.upload.path, signData.upload.token, file);
+
+      if (uploadResult.error) {
+        throw new Error(uploadResult.error.message);
+      }
+
+      const completeResponse = await fetch("/api/attachments/complete", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          attachmentId: signData.attachment.id,
+        }),
+      });
+      const completeData = (await completeResponse.json()) as {
+        attachment?: {
+          id: string;
+          originalName: string;
+          mimeType?: string | null;
+          byteSize?: number | null;
+        };
+        error?: string;
+      };
+
+      if (!completeResponse.ok || !completeData.attachment) {
+        throw new Error(completeData.error || "Upload failed.");
+      }
+
+      const completedAttachment = completeData.attachment;
+
+      setAttachments((current) =>
+        current.map((attachment) =>
+          attachment.id === localId
+            ? {
+                id: localId,
+                attachmentId: completedAttachment.id,
+                originalName: completedAttachment.originalName,
+                mimeType: completedAttachment.mimeType ?? null,
+                byteSize: completedAttachment.byteSize ?? null,
+                status: "ready",
+                error: null,
+              }
+            : attachment
+        )
+      );
+    } catch (caughtError) {
+      setAttachments((current) =>
+        current.map((attachment) =>
+          attachment.id === localId
+            ? {
+                ...attachment,
+                status: "failed",
+                error:
+                  caughtError instanceof Error
+                    ? caughtError.message
+                    : "Upload failed.",
+              }
+            : attachment
+        )
+      );
+    }
+  }
+
+  async function removeAttachment(attachment: ChatAttachment) {
+    if (attachment.attachmentId) {
+      const response = await fetch(
+        `/api/attachments/${attachment.attachmentId}`,
+        {
+          method: "DELETE",
+        }
+      );
+
+      if (!response.ok) {
+        const data = (await response.json()) as { error?: string };
+        setError(data.error || dictionary.home.chat.genericError);
+        return;
+      }
+    }
+
+    setAttachments((current) =>
+      current.filter((currentAttachment) => currentAttachment.id !== attachment.id)
+    );
+  }
+
+  function onFileChange(event: React.ChangeEvent<HTMLInputElement>) {
+    const files = Array.from(event.target.files ?? []);
+
+    for (const file of files) {
+      void uploadAttachment(file);
+    }
+
+    event.target.value = "";
   }
 
   function onSubmit(event: React.FormEvent<HTMLFormElement>) {
@@ -765,6 +1015,19 @@ export default function HomeClient({
             visible={showPalette}
           />
           <div className="flex items-center gap-3 rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-bg)] px-4 py-3 transition-colors focus-within:border-[var(--color-terminal-accent)]">
+            <button
+              type="button"
+              onClick={() => fileInputRef.current?.click()}
+              disabled={!attachmentsEnabled || isLoading}
+              title={
+                attachmentsEnabled
+                  ? "Add files"
+                  : "Attachments are unavailable until Supabase is configured."
+              }
+              className="flex h-8 w-8 items-center justify-center rounded border border-[var(--color-terminal-border)] text-lg font-bold text-[var(--color-terminal-accent)] transition-colors hover:border-[var(--color-terminal-accent)] hover:text-[var(--color-terminal-text)] disabled:cursor-not-allowed disabled:opacity-40"
+            >
+              +
+            </button>
             <span className="text-sm font-bold text-[var(--color-terminal-green)]">
               $
             </span>
@@ -807,12 +1070,66 @@ export default function HomeClient({
             />
             <button
               type="submit"
-              disabled={isLoading || !input.trim() || !canSend}
+              disabled={
+                isLoading ||
+                !input.trim() ||
+                !canSend ||
+                hasUploadingAttachments
+              }
               className="rounded bg-[var(--color-terminal-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--color-terminal-bg)] transition-opacity hover:opacity-90 disabled:opacity-30"
             >
               {dictionary.common.run}
             </button>
           </div>
+          <input
+            ref={fileInputRef}
+            type="file"
+            multiple
+            className="hidden"
+            onChange={onFileChange}
+          />
+          {attachments.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {attachments.map((attachment) => (
+                <div
+                  key={attachment.id}
+                  className="flex items-center gap-2 rounded-full border border-[var(--color-terminal-border)] bg-[var(--color-terminal-bg)] px-3 py-1.5 text-xs"
+                >
+                  <span className="max-w-48 truncate">
+                    {attachment.originalName}
+                  </span>
+                  <span
+                    className={
+                      attachment.status === "ready"
+                        ? "text-[var(--color-terminal-green)]"
+                        : attachment.status === "failed"
+                          ? "text-[var(--color-terminal-red)]"
+                          : "text-[var(--color-terminal-amber)]"
+                    }
+                  >
+                    {attachment.status}
+                  </span>
+                  {attachment.error && (
+                    <span className="max-w-40 truncate text-[var(--color-terminal-red)]">
+                      {attachment.error}
+                    </span>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => void removeAttachment(attachment)}
+                    className="text-[var(--color-terminal-muted)] transition-colors hover:text-[var(--color-terminal-text)]"
+                  >
+                    {dictionary.common.remove}
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <p className="mt-2 text-center text-[10px] text-[var(--color-terminal-muted)]">
+            {attachmentsEnabled
+              ? "Attached files upload to the current chat session before send."
+              : "Attachments are unavailable until Supabase is configured."}
+          </p>
           <p className="mt-2 text-center text-[10px] text-[var(--color-terminal-muted)]">
             {dictionary.home.chat.chooseModelHint}
           </p>
