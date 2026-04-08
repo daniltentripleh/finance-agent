@@ -1,24 +1,30 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useMemo, useRef, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import { getApiKeyMode } from "@/lib/agent-config";
+import {
+  pickDefaultModelId,
+  type ChatModelOption,
+} from "@/lib/anthropic-models";
+import { formatCatalogForChat } from "@/lib/claude-chat-catalog";
 import type {
   ClaudeCommandSummary,
   ClaudePluginSummary,
   ClaudeSkillSummary,
   ClaudeUiCatalog,
 } from "@/lib/claude-runtime-catalog";
-import { formatCatalogForChat } from "@/lib/claude-chat-catalog";
 import {
   getCommandCompletionValue,
   getCommandPaletteMatches,
 } from "@/lib/command-palette";
 import {
-  pickDefaultModelId,
-  type ChatModelOption,
-} from "@/lib/anthropic-models";
-import type { Locale } from "@/lib/i18n";
+  getDictionary,
+  type Dictionary,
+  type Locale,
+} from "@/lib/i18n";
+import LanguageSwitcher from "./language-switcher";
 
 interface ChatMessage {
   id: string;
@@ -52,11 +58,13 @@ function useApiKey() {
 
 function SettingsModal({
   apiKey,
+  dictionary,
   serverHasApiKey,
   onSave,
   onClose,
 }: {
   apiKey: string;
+  dictionary: Dictionary;
   serverHasApiKey: boolean;
   onSave: (key: string) => void;
   onClose: () => void;
@@ -72,12 +80,12 @@ function SettingsModal({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4">
       <div className="w-full max-w-md rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-6">
         <h2 className="mb-1 font-bold text-[var(--color-terminal-green)]">
-          Browser API Key
+          {dictionary.home.settings.title}
         </h2>
         <p className="mb-4 text-xs text-[var(--color-terminal-muted)]">
           {serverHasApiKey
-            ? "Optional override. Your deployment already has a server-side Anthropic key."
-            : "Enter your Anthropic API key. Stored locally in your browser only."}
+            ? dictionary.home.settings.serverDescription
+            : dictionary.home.settings.browserDescription}
         </p>
         <input
           ref={inputRef}
@@ -98,7 +106,7 @@ function SettingsModal({
             onClick={onClose}
             className="rounded border border-[var(--color-terminal-border)] px-3 py-1.5 text-xs text-[var(--color-terminal-muted)] transition-colors hover:text-[var(--color-terminal-text)]"
           >
-            Cancel
+            {dictionary.common.cancel}
           </button>
           {apiKey && (
             <button
@@ -108,7 +116,7 @@ function SettingsModal({
               }}
               className="rounded border border-[var(--color-terminal-red)] px-3 py-1.5 text-xs text-[var(--color-terminal-red)] transition-colors hover:bg-[var(--color-terminal-red)] hover:text-[var(--color-terminal-bg)]"
             >
-              Remove
+              {dictionary.common.remove}
             </button>
           )}
           <button
@@ -118,12 +126,11 @@ function SettingsModal({
             }}
             className="rounded bg-[var(--color-terminal-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--color-terminal-bg)] transition-opacity hover:opacity-90"
           >
-            Save
+            {dictionary.common.save}
           </button>
         </div>
         <p className="mt-3 text-[10px] text-[var(--color-terminal-muted)]">
-          Your browser key is only used when the deployment does not already
-          provide a server-side key.
+          {dictionary.home.settings.note}
         </p>
       </div>
     </div>
@@ -167,11 +174,13 @@ function CommandPalette({
 function PluginCard({
   plugin,
   commands,
+  dictionary,
   skills,
   onCommand,
 }: {
   plugin: ClaudePluginSummary;
   commands: ClaudeCommandSummary[];
+  dictionary: Dictionary;
   skills: ClaudeSkillSummary[];
   onCommand: (text: string) => void;
 }) {
@@ -192,7 +201,10 @@ function PluginCard({
           {plugin.description}
         </p>
         <p className="mt-2 text-[10px] uppercase tracking-[0.2em] text-[var(--color-terminal-border)]">
-          {plugin.commandCount} commands • {plugin.skillCount} skills
+          {dictionary.home.pluginCard.counts(
+            plugin.commandCount,
+            plugin.skillCount
+          )}
         </p>
       </div>
 
@@ -235,11 +247,13 @@ function PluginCard({
 
 function WelcomeScreen({
   commands,
+  dictionary,
   plugins,
   skills,
   onCommand,
 }: {
   commands: ClaudeCommandSummary[];
+  dictionary: Dictionary;
   plugins: ClaudePluginSummary[];
   skills: ClaudeSkillSummary[];
   onCommand: (text: string) => void;
@@ -247,7 +261,9 @@ function WelcomeScreen({
   const workspaceCommands = commands.filter((command) => !command.pluginId);
   const workspaceSkills = skills.filter((skill) => !skill.pluginId);
   const hasDiscoveredCapabilities =
-    plugins.length > 0 || workspaceCommands.length > 0 || workspaceSkills.length > 0;
+    plugins.length > 0 ||
+    workspaceCommands.length > 0 ||
+    workspaceSkills.length > 0;
 
   return (
     <div className="flex flex-1 items-center justify-center p-8">
@@ -257,13 +273,13 @@ function WelcomeScreen({
             $ finance-agent
           </div>
           <p className="text-sm text-[var(--color-terminal-muted)]">
-            Dynamic Claude plugin and skill discovery powered by Vercel Sandbox
+            {dictionary.home.welcome.subtitle}
           </p>
         </div>
 
         {!hasDiscoveredCapabilities ? (
           <div className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-5 text-sm text-[var(--color-terminal-muted)]">
-            No `.claude` commands, skills, or enabled plugins were discovered.
+            {dictionary.home.welcome.emptyState}
           </div>
         ) : (
           <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
@@ -272,6 +288,7 @@ function WelcomeScreen({
                 key={plugin.id}
                 plugin={plugin}
                 commands={commands}
+                dictionary={dictionary}
                 skills={skills}
                 onCommand={onCommand}
               />
@@ -281,10 +298,10 @@ function WelcomeScreen({
               <div className="rounded-lg border border-[var(--color-terminal-border)] bg-[var(--color-terminal-surface)] p-4">
                 <div className="mb-3">
                   <h3 className="text-sm font-semibold text-[var(--color-terminal-accent)]">
-                    Workspace
+                    {dictionary.home.welcome.workspace}
                   </h3>
                   <p className="mt-1 text-xs text-[var(--color-terminal-muted)]">
-                    Local `.claude` commands and skills discovered at runtime.
+                    {dictionary.home.welcome.workspaceDescription}
                   </p>
                 </div>
 
@@ -326,8 +343,7 @@ function WelcomeScreen({
         )}
 
         <p className="mt-8 text-center text-xs text-[var(--color-terminal-muted)]">
-          Refresh the page after adding or removing `.claude` files or enabled
-          plugins to see the current catalog.
+          {dictionary.home.welcome.refreshHint}
         </p>
       </div>
     </div>
@@ -347,8 +363,8 @@ function createChatMessage(
   };
 }
 
-function formatModelLabel(modelId?: string) {
-  return modelId ? modelId : "model pending";
+function formatModelLabel(dictionary: Dictionary, modelId?: string) {
+  return modelId ? modelId : dictionary.home.chat.modelPending;
 }
 
 export default function HomeClient({
@@ -360,7 +376,8 @@ export default function HomeClient({
   initialLocale: Locale;
   serverHasApiKey: boolean;
 }) {
-  const [_locale, _setLocale] = useState(initialLocale);
+  const [locale, setLocale] = useState(initialLocale);
+  const dictionary = useMemo(() => getDictionary(locale), [locale]);
   const { commands, plugins, skills } = catalog;
   const { apiKey, setApiKey, loaded } = useApiKey();
   const [showSettings, setShowSettings] = useState(false);
@@ -400,11 +417,11 @@ export default function HomeClient({
       commands.find((command) => command.hint) ?? commands[0];
 
     if (!exampleCommand) {
-      return "Ask a question or describe a task";
+      return dictionary.home.chat.askTask;
     }
 
     return `${exampleCommand.name}${exampleCommand.hint ? ` ${exampleCommand.hint}` : ""}`;
-  }, [commands]);
+  }, [commands, dictionary]);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -413,6 +430,11 @@ export default function HomeClient({
   useEffect(() => {
     inputRef.current?.focus();
   }, []);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = dictionary.metadata.title;
+  }, [dictionary, locale]);
 
   useEffect(() => {
     if (loaded && !serverHasApiKey && !apiKey) {
@@ -454,7 +476,7 @@ export default function HomeClient({
         };
 
         if (!response.ok) {
-          throw new Error(data.error || "Failed to load models.");
+          throw new Error(data.error || dictionary.home.chat.failedLoadModels);
         }
 
         const nextModels = data.models ?? [];
@@ -472,7 +494,7 @@ export default function HomeClient({
         setModelsError(
           caughtError instanceof Error
             ? caughtError.message
-            : "Failed to load models."
+            : dictionary.home.chat.failedLoadModels
         );
       } finally {
         if (!cancelled) {
@@ -486,7 +508,7 @@ export default function HomeClient({
     return () => {
       cancelled = true;
     };
-  }, [apiKey, loaded, serverHasApiKey]);
+  }, [apiKey, dictionary.home.chat.failedLoadModels, loaded, serverHasApiKey]);
 
   const paletteFilter = input.startsWith("/") ? input.slice(1) : "";
   const filteredCommands = useMemo(
@@ -504,7 +526,7 @@ export default function HomeClient({
     }
 
     if (!selectedModelId) {
-      setModelsError("Choose a model before sending a message.");
+      setModelsError(dictionary.home.chat.chooseModelFirst);
       return;
     }
 
@@ -538,7 +560,7 @@ export default function HomeClient({
       };
 
       if (!response.ok) {
-        throw new Error(data.error || "An error occurred.");
+        throw new Error(data.error || dictionary.home.chat.genericError);
       }
 
       setMessages((current) => [
@@ -551,7 +573,9 @@ export default function HomeClient({
       ]);
     } catch (caughtError) {
       setError(
-        caughtError instanceof Error ? caughtError.message : "An error occurred."
+        caughtError instanceof Error
+          ? caughtError.message
+          : dictionary.home.chat.genericError
       );
     } finally {
       setIsLoading(false);
@@ -593,13 +617,13 @@ export default function HomeClient({
   const statusText =
     apiKeyMode === "server"
       ? isLoading
-        ? "thinking..."
-        : "server key"
+        ? dictionary.home.header.thinking
+        : dictionary.home.header.serverKey
       : apiKeyMode === "browser"
         ? isLoading
-          ? "thinking..."
-          : "browser key"
-        : "no key";
+          ? dictionary.home.header.thinking
+          : dictionary.home.header.browserKey
+        : dictionary.home.header.noKey;
 
   const statusDotClass =
     apiKeyMode === "missing"
@@ -609,16 +633,17 @@ export default function HomeClient({
         : "bg-[var(--color-terminal-green)]";
 
   const modelStatus = isLoadingModels
-    ? "Loading models..."
+    ? dictionary.home.header.loadingModels
     : models.length > 0
-      ? `${models.length} models`
-      : "No models";
+      ? dictionary.home.header.models(models.length)
+      : dictionary.home.header.noModels;
 
   return (
     <div className="flex h-screen flex-col">
       {showSettings && (
         <SettingsModal
           apiKey={apiKey}
+          dictionary={dictionary}
           serverHasApiKey={serverHasApiKey}
           onSave={setApiKey}
           onClose={() => setShowSettings(false)}
@@ -634,8 +659,15 @@ export default function HomeClient({
           <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-xs text-[var(--color-terminal-muted)]">
             claude-agent-sdk
           </span>
+          <Link
+            href="/docs"
+            className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-xs text-[var(--color-terminal-accent)] transition-colors hover:border-[var(--color-terminal-accent)] hover:text-[var(--color-terminal-text)]"
+          >
+            {dictionary.home.header.docs}
+          </Link>
         </div>
         <div className="flex items-center gap-4 text-xs text-[var(--color-terminal-muted)]">
+          <LanguageSwitcher locale={locale} onLocaleChange={setLocale} />
           <span>{modelStatus}</span>
           <button
             onClick={() => setShowSettings(true)}
@@ -660,6 +692,7 @@ export default function HomeClient({
       {messages.length === 0 ? (
         <WelcomeScreen
           commands={commands}
+          dictionary={dictionary}
           plugins={plugins}
           skills={skills}
           onCommand={handleCommand}
@@ -677,12 +710,14 @@ export default function HomeClient({
                         : "text-[var(--color-terminal-accent)]"
                     }`}
                   >
-                    {message.role === "user" ? "you >" : "agent >"}
+                    {message.role === "user"
+                      ? dictionary.home.chat.userLabel
+                      : dictionary.home.chat.agentLabel}
                   </span>
                   <div className="min-w-0 flex-1">
                     <div className="mb-2">
                       <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-[10px] text-[var(--color-terminal-muted)]">
-                        {formatModelLabel(message.modelId)}
+                        {formatModelLabel(dictionary, message.modelId)}
                       </span>
                     </div>
                     {message.role === "user" ? (
@@ -702,16 +737,16 @@ export default function HomeClient({
               <div>
                 <div className="flex items-start gap-3">
                   <span className="mt-1 min-w-[60px] text-xs font-bold text-[var(--color-terminal-accent)]">
-                    agent &gt;
+                    {dictionary.home.chat.agentLabel}
                   </span>
                   <div className="flex-1">
                     <div className="mb-2">
                       <span className="rounded border border-[var(--color-terminal-border)] px-2 py-0.5 text-[10px] text-[var(--color-terminal-muted)]">
-                        {formatModelLabel(selectedModelId)}
+                        {formatModelLabel(dictionary, selectedModelId)}
                       </span>
                     </div>
                     <span className="cursor-blink text-sm text-[var(--color-terminal-muted)]">
-                      running in vercel sandbox
+                      {dictionary.home.chat.runningInSandbox}
                     </span>
                   </div>
                 </div>
@@ -741,7 +776,9 @@ export default function HomeClient({
             >
               {models.length === 0 ? (
                 <option value="">
-                  {isLoadingModels ? "Loading models..." : "No models available"}
+                  {isLoadingModels
+                    ? dictionary.home.header.loadingModels
+                    : dictionary.home.chat.noModelsAvailable}
                 </option>
               ) : (
                 models.map((model) => (
@@ -757,10 +794,12 @@ export default function HomeClient({
               onChange={onInputChange}
               placeholder={
                 canSend
-                  ? `Type a command (${inputPlaceholderExample}) or ask a question...`
+                  ? dictionary.home.chat.commandPlaceholder(
+                      inputPlaceholderExample
+                    )
                   : hasAnyKey
-                    ? "Waiting for model list..."
-                    : "Set your Anthropic API key first..."
+                    ? dictionary.home.chat.waitingForModels
+                    : dictionary.home.chat.setApiKeyFirst
               }
               className="flex-1 bg-transparent text-sm outline-none placeholder:text-[var(--color-terminal-muted)]"
               disabled={isLoading}
@@ -771,11 +810,11 @@ export default function HomeClient({
               disabled={isLoading || !input.trim() || !canSend}
               className="rounded bg-[var(--color-terminal-accent)] px-3 py-1.5 text-xs font-semibold text-[var(--color-terminal-bg)] transition-opacity hover:opacity-90 disabled:opacity-30"
             >
-              Run
+              {dictionary.common.run}
             </button>
           </div>
           <p className="mt-2 text-center text-[10px] text-[var(--color-terminal-muted)]">
-            Choose the model for this message, then press Enter to send.
+            {dictionary.home.chat.chooseModelHint}
           </p>
         </form>
       </div>

@@ -24,3 +24,9 @@ describe("getLocaleFromCookieValue", () => {
     expect(getLocaleFromCookieValue("ko")).toBe("ko");
   });
 });
+
+describe("home dictionary", () => {
+  it("exposes Korean home UI copy", () => {
+    expect(getDictionary("ko").home.header.docs).toBe("문서");
+  });
+});
